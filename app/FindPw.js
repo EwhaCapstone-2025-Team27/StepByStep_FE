@@ -11,11 +11,11 @@ export default function ResetPasswordScreen() {
         if (!email.trim()) return Alert.alert('비밀번호 재설정', '이메일을 입력하세요.');
         try {
             await authApi.requestTemporaryPassword({ email: email.trim() });
-            Alert.alert('이메일 전송 성공', '임시 비밀번호를 이메일로 보냈습니다.', [
+            Alert.alert('임시 비밀번호 발송', '해당 메일로 임시 비밀번호가 전송되었습니다. 확인해주세요.', [
                 { text: '로그인으로', onPress: () => router.replace('/login') },
             ]);
         } catch (e) {
-            Alert.alert('오류', e?.message || '전송에 실패했습니다.');
+            Alert.alert('오류', e.message);
         }
     };
 

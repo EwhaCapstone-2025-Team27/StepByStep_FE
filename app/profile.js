@@ -15,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../lib/auth-context';
-import {authApi, fetchJSON, userApi} from '../lib/apiClient.js';
+import { authApi, userApi } from '../lib/apiClient';
 
 export default function ProfileEditScreen() {
   const [nickname, setNickname] = useState('');
@@ -29,21 +29,36 @@ export default function ProfileEditScreen() {
 
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const { setTokens, logout } = useAuth();
+
+  const normalizeGender = (value) => {
+    if (!value) return 'other';
+    const lower = String(value).toLowerCase();
+    if (lower === 'male' || lower === 'm') return 'male';
+    if (lower === 'female' || lower === 'f') return 'female';
+    return 'other';
+  };
+
+  const serializeGender = (value) => {
+    if (value === 'male') return 'M';
+    if (value === 'female') return 'F';
+    return value;
+  };
   const auth = useAuth();
 
   // 내 정보 불러오기(선택)
   useEffect(() => {
     (async () => {
       try {
-        const data = await userApi.me();
-        setNickname(data.nickname ?? '');
-        setGender(data.gender ?? 'other');
-        setBirthYear(data.birthYear ? String(data.birthYear) : '');
-      } catch (err) {
-        console.warn('Failed to load profile', err);
-      }
+        const me = await userApi.me();
+        if (!me) return;
+        setNickname(me.nickname ?? '');
+        setGender(normalizeGender(me.gender));
+        setBirthYear(me.birthYear ? String(me.birthYear) : '');
+        await setTokens({ user: me });
+      } catch {}
     })();
-  }, []);
+  }, [setTokens]);
 
   const validateProfile = () => {
     if (!nickname.trim()) {
@@ -58,11 +73,11 @@ export default function ProfileEditScreen() {
     return true;
   };
 
-  const hasPwChange = () => currentPw || newPw || newPw2;
+  const hasPwChange = () => Boolean(currentPw || newPw || newPw2);
 
   const validatePassword = () => {
-    if (!currentPw || !newPw || !newPw2) {
-      Alert.alert('입력 오류', '비밀번호 변경을 원하시면 3칸을 모두 입력하세요.');
+    if (!newPw || !newPw2) {
+      Alert.alert('입력 오류', '새 비밀번호와 확인을 입력하세요.');
       return false;
     }
     if (newPw.length < 8) {
@@ -77,27 +92,38 @@ export default function ProfileEditScreen() {
   };
 
   const onSaveAll = async () => {
+    const wantsPwChange = hasPwChange();
     if (!validateProfile()) return;
-    if (hasPwChange() && !validatePassword()) return;
+    if (wantsPwChange && !validatePassword()) return;
 
     setLoading(true);
     try {
       // 1) 프로필 저장
-      await userApi.update({
+      const updated = await userApi.update({
         nickname: nickname.trim(),
-        gender,
+        gender: serializeGender(gender),
         birthYear: Number(birthYear),
       });
-
-      // 2) 비밀번호 변경(선택)
-      if (hasPwChange()) {
-        await fetchJSON('/api/users/me/change-password', {
-          method: 'POST',
-          body: { currentPassword: currentPw, newPassword: newPw },
-        });
+      if (updated) {
+        setNickname(updated.nickname ?? nickname.trim());
+        setGender(normalizeGender(updated.gender));
+        setBirthYear(updated.birthYear ? String(updated.birthYear) : String(birthYear));
+        await setTokens({ user: updated });
       }
 
-      Alert.alert('완료', hasPwChange() ? '프로필/비밀번호가 저장되었습니다.' : '프로필이 저장되었습니다.', [
+      // 2) 비밀번호 변경(선택)
+      if (wantsPwChange) {
+        await authApi.changePassword({
+          ...(currentPw ? { currentPassword: currentPw } : {}),
+          newPassword: newPw,
+          newPasswordConfirm: newPw2,
+        });
+        setCurrentPw('');
+        setNewPw('');
+        setNewPw2('');
+      }
+
+      Alert.alert('완료', wantsPwChange ? '프로필/비밀번호가 저장되었습니다.' : '프로필이 저장되었습니다.', [
         { text: '확인', onPress: () => router.back() },
       ]);
     } catch (e) {
@@ -128,8 +154,11 @@ export default function ProfileEditScreen() {
         {
           text: '확인',
           onPress: () => {
-            auth?.logout?.();
-            router.replace('/login');
+            logout()
+                .catch(() => {})
+                .finally(() => {
+                  router.replace('/login');
+                });
           },
         },
       ]);
