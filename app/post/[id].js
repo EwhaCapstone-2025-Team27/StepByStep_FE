@@ -1,13 +1,22 @@
 // app/post/[id].js
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable,
-  StyleSheet, Text, TextInput, TouchableOpacity, View,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { fetchJSON } from '../../lib/apiClient';
+import { boardApi, commentApi } from '../../lib/apiClient';
 import { useAuth } from '../../lib/auth-context';
 
 const BG = '#F7F7FA';
@@ -19,92 +28,116 @@ const TEXT_SUB = '#5E6472';
 const formatKST = (iso) => {
   try {
     const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-  } catch { return iso; }
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${min}`;
+  } catch {
+    return iso;
+  }
 };
 
-// 서버 → 앱 포맷
-const normalizePost = (p) => ({
-  id: p.id ?? p.postId,
-  nickname: p.nickname,
-  createdAt: p.createdAt,
-  content: p.content,
-  commentsNum: p.commentsNum ?? 0,
-  likesNum: p.likesNum ?? 0,
-  authorId: p.authorId ?? p.userId, // 상세 응답에 authorId 없을 수 있음(닉네임 fallback)
-});
-const normalizeComment = (c) => ({
-  id: c.id ?? c.commentId,
-  nickname: c.nickname,
-  content: c.content ?? c.comments, // 명세 상 comments 이름도 허용
-  createdAt: c.createdAt,
-  authorId: c.authorId ?? c.userId,
-  isMine: (typeof c.isMine === 'boolean' ? c.isMine : undefined),
-});
+const toNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
 
-function isMineByIdsOrNick({ authorId, nickname }, meId, meNick) {
+const parseLiked = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') {
+    const lowered = value.toLowerCase();
+    return ['true', '1', 'y', 'yes', 'on'].includes(lowered);
+  }
+  return false;
+};
+
+const normalizePost = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const likes = toNumber(raw.likesNum ?? raw.likeNum ?? raw.likes ?? raw.likeCount);
+  const comments = toNumber(
+      raw.commentsNum ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
+  );
+  return {
+    id: raw.id ?? raw.postId ?? raw.postID ?? raw.post_id ?? raw.uuid ?? raw._id,
+    nickname: raw.nickname ?? raw.writer ?? raw.author ?? '익명',
+    createdAt:
+        raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
+    content: raw.content ?? raw.body ?? '',
+    commentsNum: comments,
+    likesNum: likes,
+    liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
+    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
+    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+  };
+};
+
+const normalizeComment = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    id: raw.id ?? raw.commentId ?? raw.commentID ?? raw.uuid ?? raw._id,
+    nickname: raw.nickname ?? raw.writer ?? raw.author ?? '익명',
+    content: raw.content ?? raw.comments ?? raw.body ?? '',
+    createdAt:
+        raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
+    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
+    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+  };
+};
+
+const isMineByIdsOrNick = ({ authorId, nickname } = {}, meId, meNick) => {
   if (authorId && meId && String(authorId) === String(meId)) return true;
   const a = (nickname || '').trim().toLowerCase();
   const b = (meNick || '').trim().toLowerCase();
-  if (a && b && a === b) return true;
-  return false;
-}
+  return Boolean(a && b && a === b);
+};
 
 export default function PostDetailScreen() {
-  // 토큰 로그
-  useEffect(() => {
-    (async () => {
-      try {
-        const token = await AsyncStorage.getItem('accessToken');
-        console.log('[AUTH] accessToken?', token);
-      } catch {}
-    })();
-  }, []);
+  const { id } = useLocalSearchParams();
+  const postId = id ? String(id) : null;
 
   const { user } = (useAuth?.() || {});
-  const [meIdLocal, setMeIdLocal] = useState(null);
-  const [meNickLocal, setMeNickLocal] = useState(null);
+  const [meId, setMeId] = useState(null);
+  const [meNickname, setMeNickname] = useState(null);
+
   useEffect(() => {
+    if (user?.userId || user?.id) {
+      setMeId(String(user.userId ?? user.id));
+    }
+    if (user?.nickname) {
+      setMeNickname(user.nickname);
+      AsyncStorage.setItem('user_nickname', user.nickname).catch(() => {});
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (meId && meNickname) return;
     (async () => {
       try {
-        const uid = await AsyncStorage.getItem('x_user_id');
-        const nick = await AsyncStorage.getItem('user_nickname');
-        if (uid) setMeIdLocal(uid);
-        if (nick) setMeNickLocal(nick);
+        const storedUser = await AsyncStorage.getItem('user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          if (!meId) {
+            const fallbackId = parsed?.userId ?? parsed?.id ?? parsed?.user_id;
+            if (fallbackId) setMeId(String(fallbackId));
+          }
+          if (!meNickname && parsed?.nickname) setMeNickname(parsed.nickname);
+        }
+        if (!meNickname) {
+          const storedNick = await AsyncStorage.getItem('user_nickname');
+          if (storedNick) setMeNickname(storedNick);
+        }
       } catch {}
     })();
-  }, []);
-  useEffect(() => {
-  (async () => {
-    try {
-      const t = await AsyncStorage.getItem('accessToken');
-      if (t) {
-        const payload = decodeJwtPayload(t);
-        if (payload?.sub && !meIdLocal) setMeIdLocal(String(payload.sub));
-        if (payload?.nickname && !meNickLocal) {
-          setMeNickLocal(String(payload.nickname));
-          await AsyncStorage.setItem('user_nickname', String(payload.nickname));
-        }
-      }
-    } catch {}
-  })();
-}, []);
+  }, [meId, meNickname]);
 
-// 디버깅 로그 추가 (선택)
-useEffect(() => {
-  console.log('[WHOAMI]', { meId, meNickname, postNick: post?.nickname, postAuthor: post?.authorId });
-}, [meId, meNickname, post]);
-
-  const meId = (user?.userId ?? user?.id ?? meIdLocal) ?? null;
-  const meNickname = (user?.nickname ?? meNickLocal) ?? null;
-  if (typeof console !== 'undefined') console.reportErrorsAsExceptions = true;
-
-  const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
 
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [likeBusy, setLikeBusy] = useState(false);
 
   const [myComment, setMyComment] = useState('');
 
@@ -112,319 +145,406 @@ useEffect(() => {
   const [editTarget, setEditTarget] = useState(null);
   const [editText, setEditText] = useState('');
 
-  // 게시글 수정 모달
   const [postEditOpen, setPostEditOpen] = useState(false);
   const [postEditText, setPostEditText] = useState('');
 
   const listRef = useRef(null);
-  const scrollToBottom = () => requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+  const scrollToBottom = useCallback(
+      () => requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true })),
+      []
+  );
 
   const orderedComments = useMemo(() => {
     const arr = Array.isArray(comments) ? [...comments] : [];
     return arr.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
   }, [comments]);
 
-  // 상세 로드
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!postId) return;
     try {
       setLoading(true);
-      console.log('[POST] fetch start', id);
-      const data = await fetchJSON(`/api/board/posts/${id}`);
-      console.log('[POST] raw payload =', data);
+      const payload = await boardApi.getPostById(postId);
+      const normalizedPost = normalizePost(payload);
+      const commentSource = Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.comments)
+              ? payload.comments
+              : [];
+      const normalizedComments = commentSource
+          .map((item) => normalizeComment(item))
+          .filter(Boolean);
 
-      if (!data || typeof data !== 'object') {
-        throw new Error('서버에서 유효한 게시글 데이터를 받지 못했습니다.');
-      }
-
-      const p = normalizePost(data);
-      const cmtsRaw = Array.isArray(data?.data) ? data.data : [];
-      const cmts = cmtsRaw.map(normalizeComment);
-
-      console.log('[POST] normalized', { p, cmtsLen: cmts.length });
-
-      setPost(p);
-      setComments(cmts);
+      setPost(normalizedPost);
+      setComments(normalizedComments);
     } catch (e) {
-      console.error('[POST] load error:', e);
-      Alert.alert('불러오기 실패', e?.message || '게시글을 불러오지 못했습니다.');
+      if (e?.status === 404) {
+        Alert.alert('알림', '게시글을 찾을 수 없습니다.', [
+          { text: '확인', onPress: () => router.back() },
+        ]);
+      } else {
+        Alert.alert('불러오기 실패', e?.message || '게시글을 불러오지 못했습니다.');
+      }
     } finally {
       setLoading(false);
-      setTimeout(scrollToBottom, 0);
+      scrollToBottom();
     }
-  };
+  }, [postId, scrollToBottom]);
 
-  useEffect(() => { if (id) load(); }, [id]);
+  useEffect(() => {
+    if (postId) load();
+  }, [postId, load]);
 
-  // 댓글 작성
-  const onCreate = async () => {
+  const onCreateComment = useCallback(async () => {
     const content = myComment.trim();
-    if (!content) return;
-
+    if (!content || !postId) return;
     try {
-      const created = await fetchJSON(`/api/board/posts/${id}/comments`, {
-        method: 'POST',
-        body: { content },
-      });
-      const newCmt = { ...normalizeComment(created), isMine: true };
-      setComments((prev) => [...prev, newCmt]);
+      const created = await commentApi.create(postId, { content });
+      const newComment = { ...normalizeComment(created), isMine: true };
+      setComments((prev) => [...prev, newComment]);
+      setPost((prev) =>
+          prev
+              ? { ...prev, commentsNum: toNumber(prev.commentsNum) + 1 }
+              : prev
+      );
       setMyComment('');
-      setTimeout(scrollToBottom, 0);
-      await AsyncStorage.setItem('last_commented_post', String(id));
+      scrollToBottom();
+      await AsyncStorage.setItem('last_commented_post', String(postId));
     } catch (e) {
-      if (e.status === 401) Alert.alert('로그인 필요', '로그인 후 이용해주세요.');
-      else Alert.alert('작성 실패', e.message);
+      if (e?.status === 401) {
+        Alert.alert('로그인 필요', '로그인 후 이용해주세요.');
+      } else {
+        Alert.alert('작성 실패', e?.message || '댓글을 작성하지 못했습니다.');
+      }
     }
-  };
+  }, [myComment, postId, scrollToBottom]);
 
-  // 댓글 수정
-  const openEdit = (c) => { setEditTarget(c); setEditText(c.content || ''); setEditOpen(true); };
-  const onEditSubmit = async () => {
+  const openEdit = useCallback((comment) => {
+    setEditTarget(comment);
+    setEditText(comment?.content || '');
+    setEditOpen(true);
+  }, []);
+
+  const onEditSubmit = useCallback(async () => {
     if (!editTarget) return;
     const content = editText.trim();
     if (!content) return;
     try {
-      const updated = await fetchJSON(`/api/comments/${editTarget.id}`, {
-        method: 'PATCH',
-        body: { content },
-      });
-      const newItem = normalizeComment(updated);
-      setComments((prev) => prev.map((c) => (c.id === editTarget.id ? newItem : c)));
+      const updated = await commentApi.update(editTarget.id, { content });
+      const normalized = normalizeComment(updated);
+      setComments((prev) => prev.map((c) => (c.id === editTarget.id ? normalized : c)));
       setEditOpen(false);
-      setTimeout(scrollToBottom, 0);
+      scrollToBottom();
     } catch (e) {
-      Alert.alert('수정 실패', e.message);
+      Alert.alert('수정 실패', e?.message || '댓글을 수정하지 못했습니다.');
     }
-  };
+  }, [editTarget, editText, scrollToBottom]);
 
-  // 댓글 삭제
-  const onDelete = (c) => {
+  const onDeleteComment = useCallback((comment) => {
+    if (!comment) return;
     Alert.alert('삭제', '댓글을 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       {
-        text: '삭제', style: 'destructive',
+        text: '삭제',
+        style: 'destructive',
         onPress: async () => {
           try {
-            await fetchJSON(`/api/comments/${c.id}`, { method: 'DELETE' });
-            setComments((prev) => prev.filter((x) => x.id !== c.id));
+            await commentApi.delete(comment.id);
+            setComments((prev) => prev.filter((c) => c.id !== comment.id));
+            setPost((prev) =>
+                prev
+                    ? { ...prev, commentsNum: Math.max(0, toNumber(prev.commentsNum) - 1) }
+                    : prev
+            );
           } catch (e) {
-            Alert.alert('삭제 실패', e.message);
+            Alert.alert('삭제 실패', e?.message || '댓글을 삭제하지 못했습니다.');
           }
         },
       },
     ]);
-  };
+  }, []);
 
-  // 게시글 수정/삭제(상세)
   const isMinePost = post && isMineByIdsOrNick(post, meId, meNickname);
 
-  const onPostEditOpen = () => {
+  const onPostEditOpen = useCallback(() => {
     setPostEditText(post?.content || '');
     setPostEditOpen(true);
-  };
-  const onPostEditSave = async () => {
+  }, [post]);
+
+  const onPostEditSave = useCallback(async () => {
+    if (!post) return;
     const body = postEditText.trim();
-    if (!body) return Alert.alert('내용을 입력해주세요');
+    if (!body) {
+      Alert.alert('내용을 입력해주세요');
+      return;
+    }
     try {
-      const updated = await fetchJSON(`/api/board/posts/${post.id}`, {
-        method: 'PATCH',
-        body: { content: body },
-      });
-      const np = normalizePost(updated);
-      setPost(np);
+      const updated = await boardApi.updatePost(post.id, { content: body });
+      const normalized = normalizePost(updated);
+      setPost((prev) => ({ ...prev, ...normalized }));
       setPostEditOpen(false);
     } catch (e) {
-      Alert.alert('수정 실패', e.message);
+      Alert.alert('수정 실패', e?.message || '게시글을 수정하지 못했습니다.');
     }
-  };
+  }, [post, postEditText]);
 
-  const onPostDelete = () => {
+  const onPostDelete = useCallback(() => {
+    if (!post) return;
     Alert.alert('삭제', '게시글을 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       {
-        text: '삭제', style: 'destructive',
+        text: '삭제',
+        style: 'destructive',
         onPress: async () => {
           try {
-            await fetchJSON(`/api/board/posts/${post.id}`, { method: 'DELETE' });
+            await boardApi.deletePost(post.id);
             router.back();
           } catch (e) {
-            Alert.alert('삭제 실패', e.message || '삭제에 실패했습니다.');
+            Alert.alert('삭제 실패', e?.message || '게시글을 삭제하지 못했습니다.');
           }
         },
       },
     ]);
-  };
+  }, [post]);
 
-  const Header = (
-    <View style={S.header}>
-      <TouchableOpacity onPress={() => router.back()}><Text style={S.headerIcon}>‹</Text></TouchableOpacity>
-      <Text style={S.headerTitle}>게시글 상세</Text>
-      <TouchableOpacity onPress={load}><Text style={S.headerIcon}>↻</Text></TouchableOpacity>
-    </View>
+  const onToggleLike = useCallback(async () => {
+    if (!post || likeBusy) return;
+    const optimisticLike = !post.liked;
+    setLikeBusy(true);
+    setPost((prev) => {
+      if (!prev) return prev;
+      const likes = toNumber(prev.likesNum);
+      const nextLikes = optimisticLike ? likes + 1 : Math.max(0, likes - 1);
+      return { ...prev, liked: optimisticLike, likesNum: nextLikes };
+    });
+    try {
+      const res = optimisticLike
+          ? await boardApi.likeOn(post.id, { likeNum: post.likesNum })
+          : await boardApi.likeOff(post.id);
+      const likesFromRes =
+          res?.likesNum ?? res?.likeNum ?? res?.likes ?? res?.likeCount ?? res?.data?.likesNum;
+      const likedFromRes = res?.liked ?? res?.isLiked ?? res?.likeYn ?? res?.likeStatus;
+      setPost((prev) =>
+          prev
+              ? {
+                ...prev,
+                likesNum:
+                    likesFromRes !== undefined ? toNumber(likesFromRes) : prev.likesNum,
+                liked: likedFromRes !== undefined ? parseLiked(likedFromRes) : prev.liked,
+              }
+              : prev
+      );
+    } catch (e) {
+      setPost((prev) => {
+        if (!prev) return prev;
+        const likes = toNumber(prev.likesNum);
+        const restored = optimisticLike ? Math.max(0, likes - 1) : likes + 1;
+        return { ...prev, liked: !optimisticLike, likesNum: restored };
+      });
+      Alert.alert('좋아요 실패', e?.message || '좋아요 처리에 실패했습니다.');
+    } finally {
+      setLikeBusy(false);
+    }
+  }, [post, likeBusy]);
+
+  const renderComment = useCallback(
+      ({ item }) => {
+        const mine = isMineByIdsOrNick(item, meId, meNickname);
+        return (
+            <View style={S.cmtCard}>
+              <View style={S.cmtHead}>
+                <Text style={S.cmtNick}>{item.nickname || '익명'}</Text>
+                <Text style={S.cmtDate}>{formatKST(item.createdAt)}</Text>
+              </View>
+              <Text style={S.cmtBody}>{item.content}</Text>
+              <View style={S.cmtActions}>
+                {mine && (
+                    <>
+                      <Pressable style={S.pill} onPress={() => openEdit(item)}>
+                        <Text style={S.pillText}>수정</Text>
+                      </Pressable>
+                      <Pressable style={[S.pill, S.danger]} onPress={() => onDeleteComment(item)}>
+                        <Text style={[S.pillText, { color: '#b91c1c' }]}>삭제</Text>
+                      </Pressable>
+                    </>
+                )}
+              </View>
+            </View>
+        );
+      },
+      [meId, meNickname, onDeleteComment, openEdit]
   );
-
-  const PostCard = post && (
-    <View style={S.postCardBig}>
-      <View style={S.postHead}>
-        <Text style={S.nickBig}>{post.nickname || '익명'}</Text>
-        <Text style={S.dateBig}>{formatKST(post.createdAt)}</Text>
-      </View>
-
-      <Text style={S.bodyBig}>{post.content}</Text>
-
-      <View style={[S.metaRow, { alignItems: 'center' }]}>
-        <Text style={S.meta}>❤️ {post.likesNum || 0}</Text>
-        <Text style={S.meta}>·</Text>
-        <Text style={S.meta}>💬 {post.commentsNum ?? orderedComments.length}</Text>
-        <View style={{ flex: 1 }} />
-        {isMinePost && (
-          <>
-            <Pressable style={S.pill} onPress={onPostEditOpen}><Text style={S.pillText}>수정</Text></Pressable>
-            <Pressable style={[S.pill, S.danger]} onPress={onPostDelete}><Text style={[S.pillText, { color:'#b91c1c' }]}>삭제</Text></Pressable>
-          </>
-        )}
-      </View>
-    </View>
-  );
-
-  const renderComment = ({ item }) => {
-    const isMine = isMineByIdsOrNick(item, meId, meNickname);
-    return (
-      <View style={S.cmtCard}>
-        <View style={S.cmtHead}>
-          <Text style={S.cmtNick}>{item.nickname || '익명'}</Text>
-          <Text style={S.cmtDate}>{formatKST(item.createdAt)}</Text>
-        </View>
-        <Text style={S.cmtBody}>{item.content}</Text>
-        <View style={S.cmtActions}>
-          {isMine && (
-            <>
-              <Pressable style={S.pill} onPress={() => openEdit(item)}><Text style={S.pillText}>수정</Text></Pressable>
-              <Pressable style={[S.pill, S.danger]} onPress={() => onDelete(item)}><Text style={[S.pillText, { color:'#b91c1c' }]}>삭제</Text></Pressable>
-            </>
-          )}
-        </View>
-      </View>
-    );
-  };
 
   const [showDown, setShowDown] = useState(false);
-  const onScroll = (e) => {
+  const onScroll = useCallback((e) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const dist = contentSize.height - (contentOffset.y + layoutMeasurement.height);
     setShowDown(dist > 120);
-  };
+  }, []);
 
   return (
-    <SafeAreaView style={S.safe}>
-      {Header}
-
-      {loading && !post ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text>불러오는 중…</Text>
-        </View>
-      ) : (
-        <FlatList
-          ref={listRef}
-          data={orderedComments}
-          keyExtractor={(x) => String(x.id)}
-          renderItem={renderComment}
-          contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
-          ListHeaderComponent={
-            <>
-              {PostCard}
-              <View style={S.sectionRow}>
-                <Text style={S.sectionTitle}>댓글</Text>
-                <View style={S.sectionLine} />
-              </View>
-            </>
-          }
-          ListEmptyComponent={!loading && (<Text style={S.empty}>첫 댓글을 남겨 보세요!</Text>)}
-          refreshing={loading}
-          onRefresh={load}
-          onContentSizeChange={() => requestAnimationFrame(scrollToBottom)}
-          onScroll={onScroll}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-
-      {showDown && (
-        <TouchableOpacity style={S.fab} onPress={scrollToBottom} activeOpacity={0.9}>
-          <Text style={S.fabIcon}>↓</Text>
-        </TouchableOpacity>
-      )}
-
-      <KeyboardAvoidingView
-        behavior={Platform.select({ ios: 'padding' })}
-        keyboardVerticalOffset={insets.bottom ? 0 : 20}
-        style={[S.inputBarWrap, { paddingBottom: insets.bottom || 8 }]}
-      >
-        <View style={S.inputRow}>
-          <TextInput
-            value={myComment}
-            onChangeText={setMyComment}
-            placeholder="댓글을 입력하세요"
-            placeholderTextColor="#9ca3af"
-            style={[S.input, { flex: 1 }]}
-            returnKeyType="send"
-            onSubmitEditing={onCreate}
-          />
-          <TouchableOpacity style={S.sendBtn} onPress={onCreate}>
-            <Text style={{ color: '#fff', fontWeight: '800' }}>등록</Text>
+      <SafeAreaView style={S.safe}>
+        <View style={S.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={S.headerIcon}>‹</Text>
+          </TouchableOpacity>
+          <Text style={S.headerTitle}>게시글 상세</Text>
+          <TouchableOpacity onPress={load}>
+            <Text style={S.headerIcon}>↻</Text>
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
 
-      {/* 댓글 수정 모달 */}
-      <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => setEditOpen(false)}>
-        <View style={S.modalBg}>
-          <View style={S.modal}>
-            <Text style={S.modalTitle}>댓글 수정</Text>
-            <TextInput
-              value={editText}
-              onChangeText={setEditText}
-              placeholder="수정할 내용"
-              placeholderTextColor="#9ca3af"
-              style={S.editInput}
-              multiline
+        {loading && !post ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text>불러오는 중…</Text>
+            </View>
+        ) : (
+            <FlatList
+                ref={listRef}
+                data={orderedComments}
+                keyExtractor={(item) => String(item.id)}
+                renderItem={renderComment}
+                contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+                ListHeaderComponent={
+                  <>
+                    {post && (
+                        <View style={S.postCardBig}>
+                          <View style={S.postHead}>
+                            <Text style={S.nickBig}>{post.nickname || '익명'}</Text>
+                            <Text style={S.dateBig}>{formatKST(post.createdAt)}</Text>
+                          </View>
+
+                          <Text style={S.bodyBig}>{post.content}</Text>
+
+                          <View style={[S.metaRow, { alignItems: 'center' }]}>
+                            <Pressable
+                                style={S.metaLike}
+                                onPress={onToggleLike}
+                                disabled={likeBusy}
+                                hitSlop={6}
+                            >
+                              <Text
+                                  style={[
+                                    S.meta,
+                                    { fontWeight: '700', color: post.liked ? '#ec4899' : '#6b7280' },
+                                  ]}
+                              >
+                                {post.liked ? '💖' : '❤️'} {toNumber(post.likesNum)}
+                              </Text>
+                            </Pressable>
+                            <Text style={S.meta}>·</Text>
+                            <Text style={S.meta}>💬 {post.commentsNum ?? orderedComments.length}</Text>
+                            <View style={{ flex: 1 }} />
+                            {isMinePost && (
+                                <>
+                                  <Pressable style={S.pill} onPress={onPostEditOpen}>
+                                    <Text style={S.pillText}>수정</Text>
+                                  </Pressable>
+                                  <Pressable style={[S.pill, S.danger]} onPress={onPostDelete}>
+                                    <Text style={[S.pillText, { color: '#b91c1c' }]}>삭제</Text>
+                                  </Pressable>
+                                </>
+                            )}
+                          </View>
+                        </View>
+                    )}
+                    <View style={S.sectionRow}>
+                      <Text style={S.sectionTitle}>댓글</Text>
+                      <View style={S.sectionLine} />
+                    </View>
+                  </>
+                }
+                ListEmptyComponent={!loading && (
+                    <Text style={S.empty}>첫 댓글을 남겨 보세요!</Text>
+                )}
+                refreshing={loading}
+                onRefresh={load}
+                onContentSizeChange={scrollToBottom}
+                onScroll={onScroll}
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator={false}
             />
-            <View style={S.modalRow}>
-              <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={() => setEditOpen(false)}>
-                <Text style={S.modalBtnText}>취소</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[S.modalBtn, S.modalOK]} onPress={onEditSubmit}>
-                <Text style={[S.modalBtnText, { color: '#fff' }]}>저장</Text>
-              </TouchableOpacity>
+        )}
+
+        {showDown && (
+            <TouchableOpacity style={S.fab} onPress={scrollToBottom} activeOpacity={0.9}>
+              <Text style={S.fabIcon}>↓</Text>
+            </TouchableOpacity>
+        )}
+
+        <KeyboardAvoidingView
+            behavior={Platform.select({ ios: 'padding' })}
+            keyboardVerticalOffset={insets.bottom ? 0 : 20}
+            style={[S.inputBarWrap, { paddingBottom: insets.bottom || 8 }]}
+        >
+          <View style={S.inputRow}>
+            <TextInput
+                value={myComment}
+                onChangeText={setMyComment}
+                placeholder="댓글을 입력하세요"
+                placeholderTextColor="#9ca3af"
+                style={[S.input, { flex: 1 }]}
+                returnKeyType="send"
+                onSubmitEditing={onCreateComment}
+            />
+            <TouchableOpacity style={S.sendBtn} onPress={onCreateComment}>
+              <Text style={{ color: '#fff', fontWeight: '800' }}>등록</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+
+        <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => setEditOpen(false)}>
+          <View style={S.modalBg}>
+            <View style={S.modal}>
+              <Text style={S.modalTitle}>댓글 수정</Text>
+              <TextInput
+                  value={editText}
+                  onChangeText={setEditText}
+                  placeholder="수정할 내용"
+                  placeholderTextColor="#9ca3af"
+                  style={S.editInput}
+                  multiline
+              />
+              <View style={S.modalRow}>
+                <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={() => setEditOpen(false)}>
+                  <Text style={S.modalBtnText}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.modalBtn, S.modalOK]} onPress={onEditSubmit}>
+                  <Text style={[S.modalBtnText, { color: '#fff' }]}>저장</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      {/* 게시글 수정 모달 */}
-      <Modal visible={postEditOpen} transparent animationType="fade" onRequestClose={() => setPostEditOpen(false)}>
-        <View style={S.modalBg}>
-          <View style={S.modal}>
-            <Text style={S.modalTitle}>게시글 수정</Text>
-            <TextInput
-              value={postEditText}
-              onChangeText={setPostEditText}
-              placeholder="수정할 내용"
-              placeholderTextColor="#9ca3af"
-              style={S.editInput}
-              multiline
-            />
-            <View style={S.modalRow}>
-              <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={() => setPostEditOpen(false)}>
-                <Text style={S.modalBtnText}>취소</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[S.modalBtn, S.modalOK]} onPress={onPostEditSave}>
-                <Text style={[S.modalBtnText, { color: '#fff' }]}>저장</Text>
-              </TouchableOpacity>
+        <Modal
+            visible={postEditOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setPostEditOpen(false)}
+        >
+          <View style={S.modalBg}>
+            <View style={S.modal}>
+              <Text style={S.modalTitle}>게시글 수정</Text>
+              <TextInput
+                  value={postEditText}
+                  onChangeText={setPostEditText}
+                  placeholder="수정할 내용"
+                  placeholderTextColor="#9ca3af"
+                  style={S.editInput}
+                  multiline
+              />
+              <View style={S.modalRow}>
+                <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={() => setPostEditOpen(false)}>
+                  <Text style={S.modalBtnText}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.modalBtn, S.modalOK]} onPress={onPostEditSave}>
+                  <Text style={[S.modalBtnText, { color: '#fff' }]}>저장</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+        </Modal>
+      </SafeAreaView>
   );
 }
 
@@ -457,6 +577,7 @@ const S = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
+  postHead: { flexDirection: 'row', alignItems: 'center' },
   nickBig: { fontWeight: '800', color: '#0f172a', fontSize: 16 },
   dateBig: { marginLeft: 10, color: '#64748b', fontSize: 12 },
   bodyBig: { color: '#0f172a', fontSize: 16, lineHeight: 24, marginTop: 8 },
@@ -464,13 +585,23 @@ const S = StyleSheet.create({
   sectionTitle: { fontWeight: '800', color: '#0f172a', marginRight: 10 },
   sectionLine: { height: 1, backgroundColor: '#e5e7eb', flex: 1 },
 
-  metaRow: { flexDirection: 'row', gap: 6, marginTop: 10 },
+  metaRow: { flexDirection: 'row', gap: 6, marginTop: 12 },
   meta: { color: '#6b7280', fontSize: 12 },
+  metaLike: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
 
   cmtCard: {
     backgroundColor: '#fff',
-    borderWidth: 1, borderColor: '#e5e7eb',
-    borderRadius: 14, padding: 12, marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
   },
   cmtHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   cmtNick: { fontWeight: '700', color: '#111827' },
@@ -478,28 +609,81 @@ const S = StyleSheet.create({
   cmtBody: { color: '#111827', lineHeight: 20, marginTop: 2 },
 
   cmtActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  pill: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12 },
+  pill: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
   pillText: { fontWeight: '700', color: '#111827' },
   danger: { borderColor: '#fecaca', backgroundColor: '#fff1f2' },
 
   empty: { textAlign: 'center', color: '#9ca3af', paddingTop: 40 },
 
-  inputBarWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: CARD, borderTopWidth: 1, borderTopColor: BORDER },
+  inputBarWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: CARD,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+  },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
-  input: { height: 40, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 10, backgroundColor: '#fff', color: '#111827' },
-  sendBtn: { height: 40, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' },
+  input: {
+    height: 40,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    backgroundColor: '#fff',
+    color: '#111827',
+  },
+  sendBtn: {
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   fab: {
-    position: 'absolute', right: 14, bottom: 100, width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, elevation: 3,
+    position: 'absolute',
+    right: 14,
+    bottom: 100,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
   },
   fabIcon: { color: '#fff', fontSize: 20, fontWeight: '900' },
 
-  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  modalBg: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
   modal: { width: '100%', maxWidth: 380, backgroundColor: '#fff', borderRadius: 16, padding: 16 },
   modalTitle: { fontSize: 16, fontWeight: '800', color: TEXT_MAIN },
-  editInput: { minHeight: 100, marginTop: 10, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, padding: 10, color: TEXT_MAIN },
+  editInput: {
+    minHeight: 100,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    padding: 10,
+    color: TEXT_MAIN,
+  },
   modalRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 },
   modalBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   modalCancel: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },

@@ -1,6 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -16,239 +15,367 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { boardApi } from '../lib/apiClient';
+import { useAuth } from '../lib/auth-context';
 
-// 간단한 유틸
-const nowISO = () => new Date().toISOString();
-const formatKST = (iso) => {
-  try {
-    const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(
-        d.getMinutes()
-    ).padStart(2, '0')}`;
-  } catch {
-    return iso;
-  }
-};
-
-const STORAGE_KEY = 'board_posts_v1'; // 로컬 저장 키
-const USER_KEY = 'board_user_id_v1';
-const MY_POSTS_KEY = 'board_my_posts_v1';
-
-/** ==== Palette & tokens (ChatScreen과 톤 맞춤) ==== */
 const BG = '#F7F7FA';
 const CARD = '#FFFFFF';
 const BORDER = '#E6E7EC';
 const TEXT_MAIN = '#0E0F12';
 const TEXT_SUB = '#5E6472';
+const PAGE_SIZE = 10;
+
+const formatKST = (iso) => {
+  try {
+    const d = new Date(iso);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${min}`;
+  } catch {
+    return iso;
+  }
+};
+
+const toNumber = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const parseLiked = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') {
+    const lowered = value.toLowerCase();
+    return ['true', '1', 'y', 'yes', 'on'].includes(lowered);
+  }
+  return false;
+};
+
+const normalizeListPost = (item, idx = 0) => {
+  if (!item || typeof item !== 'object') return null;
+  const rawId =
+      item.id ?? item.postId ?? item.postID ?? item.post_id ?? item.uuid ?? item._id ?? idx;
+  const comments = toNumber(
+      item.commentsNum ?? item.commentCount ?? item.comments ?? item.commentCnt ?? item.commentsNum,
+      0
+  );
+  const likes = toNumber(
+      item.likesNum ?? item.likeNum ?? item.likes ?? item.likeCount ?? item.likesCnt,
+      0
+  );
+  return {
+    id: String(rawId),
+    nickname: item.nickname ?? item.writer ?? item.author ?? '익명',
+    createdAt:
+        item.createdAt ?? item.created_at ?? item.createDate ?? item.createdDate ?? new Date().toISOString(),
+    content: item.content ?? item.body ?? '',
+    commentsNum: comments,
+    likesNum: likes,
+    liked: parseLiked(
+        item.liked ?? item.isLiked ?? item.likeYn ?? item.likeOn ?? item.likeStatus ?? false
+    ),
+    authorId: item.authorId ?? item.userId ?? item.ownerId ?? null,
+    isMine: typeof item.isMine === 'boolean' ? item.isMine : undefined,
+    likeBusy: false,
+  };
+};
+
+const determineHasMore = (payload, receivedLength, pageNumber, pageSize) => {
+  if (!payload || typeof payload !== 'object') {
+    return receivedLength >= pageSize;
+  }
+  if (typeof payload.last === 'boolean') return !payload.last;
+  if (typeof payload.hasMore === 'boolean') return payload.hasMore;
+  if (typeof payload.hasNext === 'boolean') return payload.hasNext;
+  if (payload.pageable?.pageNumber != null && payload.pageable?.totalPages != null) {
+    return payload.pageable.pageNumber + 1 < payload.pageable.totalPages;
+  }
+  if (typeof payload.totalPages === 'number') {
+    return pageNumber + 1 < payload.totalPages;
+  }
+  if (typeof payload.totalElements === 'number') {
+    return (pageNumber + 1) * pageSize < payload.totalElements;
+  }
+  if (typeof payload.pages === 'number' && typeof payload.page === 'number') {
+    return payload.page + 1 < payload.pages;
+  }
+  if (typeof payload.nextPage === 'number') {
+    return payload.nextPage > pageNumber;
+  }
+  return receivedLength >= pageSize;
+};
+
+const isMineByUser = (item, meId, meNickname) => {
+  if (!item) return false;
+  if (typeof item.isMine === 'boolean') return item.isMine;
+  if (item.authorId && meId && String(item.authorId) === String(meId)) return true;
+  const nick = (item.nickname || '').trim().toLowerCase();
+  const meNick = (meNickname || '').trim().toLowerCase();
+  return nick && meNick && nick === meNick;
+};
 
 export default function BoardScreen() {
+  const { user } = (useAuth?.() || {});
+  const meId = user?.userId ?? user?.id ?? user?.user_id ?? null;
+  const meNickname = user?.nickname ?? user?.profile?.nickname ?? user?.name ?? null;
+
   const insets = useSafeAreaInsets();
   const [posts, setPosts] = useState([]);
   const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(0);
   const [composeOpen, setComposeOpen] = useState(false);
   const [content, setContent] = useState('');
-  const [nick, setNick] = useState('');
-  const [myId, setMyId] = useState(null);
-  const [myPosts, setMyPosts] = useState([]);
+  const [initialFetched, setInitialFetched] = useState(false);
 
-  const myPostSet = useMemo(() => new Set(myPosts), [myPosts]);
+  const keywordRef = useRef('');
 
-  const ensureUserId = useCallback(async () => {
-    if (myId) return myId;
-    try {
-      let stored = await AsyncStorage.getItem(USER_KEY);
-      if (!stored) {
-        stored = `local_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-        await AsyncStorage.setItem(USER_KEY, stored);
-      }
-      setMyId(stored);
-      return stored;
-    } catch (e) {
-      console.warn('Failed to prepare board user id', e);
-      return null;
-    }
-  }, [myId]);
+  const loadPosts = useCallback(
+      async ({ page: pageParam = 0, append = false, keyword } = {}) => {
+        const queryKeyword = keyword ?? keywordRef.current ?? '';
 
-  // 최초 로드
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) setPosts(JSON.parse(raw));
-      } catch (e) {
-        console.warn('Failed to load posts', e);
-      }
-    })();
-  }, []);
+        if (append) setLoadingMore(true);
+        else if (initialFetched) setRefreshing(true);
+        else setLoading(true);
 
-  useEffect(() => {
-    ensureUserId();
-  }, [ensureUserId]);
+        try {
+          const payload = await boardApi.getPosts({
+            page: pageParam,
+            size: PAGE_SIZE,
+            keyword: queryKeyword,
+          });
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(MY_POSTS_KEY);
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setMyPosts(parsed.filter((id) => typeof id === 'string'));
+          const listSource = Array.isArray(payload?.content)
+              ? payload.content
+              : Array.isArray(payload)
+                  ? payload
+                  : Array.isArray(payload?.data)
+                      ? payload.data
+                      : [];
+
+          const normalized = listSource
+              .map((item, idx) => normalizeListPost(item, idx))
+              .filter(Boolean);
+
+          setPosts((prev) => (append ? [...prev, ...normalized] : normalized));
+          setPage(pageParam);
+          setHasMore(determineHasMore(payload, normalized.length, pageParam, PAGE_SIZE));
+        } catch (e) {
+          if (e?.status === 404) {
+            if (!append) {
+              setPosts([]);
+              setPage(0);
+              setHasMore(false);
+            }
+          } else {
+            console.error('[BOARD] load error', e);
+            Alert.alert('불러오기 실패', e?.message || '게시글을 불러오지 못했습니다.');
+          }
+        } finally {
+          setInitialFetched(true);
+          setLoading(false);
+          setRefreshing(false);
+          setLoadingMore(false);
         }
-      } catch (e) {
-        console.warn('Failed to load my posts', e);
-      }
-    })();
-  }, []);
+      },
+      [initialFetched]
+  );
 
-  // 저장
-  const persist = async (next) => {
-    setPosts(next);
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch (e) {
-      console.warn('Failed to save posts', e);
-    }
-  };
+  useFocusEffect(
+      useCallback(() => {
+        loadPosts({ page: 0, keyword: keywordRef.current });
+      }, [loadPosts])
+  );
 
-  const onCreate = async () => {
+  useEffect(() => {
+    const trimmed = search.trim();
+    if (trimmed === keywordRef.current) return;
+    const timer = setTimeout(() => {
+      keywordRef.current = trimmed;
+      loadPosts({ page: 0, keyword: trimmed });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search, loadPosts]);
+
+  const onRefresh = useCallback(() => {
+    if (loading || refreshing) return;
+    loadPosts({ page: 0, keyword: keywordRef.current });
+  }, [loadPosts, loading, refreshing]);
+
+  const onEndReached = useCallback(() => {
+    if (!hasMore || loading || refreshing || loadingMore) return;
+    loadPosts({ page: page + 1, append: true, keyword: keywordRef.current });
+  }, [hasMore, loading, refreshing, loadingMore, loadPosts, page]);
+
+  const onCreate = useCallback(async () => {
     const body = content.trim();
-    const nickname = (nick || '익명').trim();
     if (!body) {
       Alert.alert('내용을 입력해주세요');
       return;
     }
-    const authorId = (await ensureUserId()) || myId;
-
-    const post = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      content: body,
-      nickname,
-      createdAt: nowISO(),
-      likes: 0,
-      comments: [],
-      ...(authorId ? { authorId } : {}),
-    };
-
-    await persist([post, ...posts]);
-    setMyPosts((prev) => {
-      if (prev.includes(post.id)) return prev;
-      const next = [...prev, post.id];
-      AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch((e) =>
-          console.warn('Failed to save my posts', e)
-      );
-      return next;
-    });
-    setContent('');
-    setComposeOpen(false);
-  };
-
-  const onLike = async (id) => {
-    const next = posts.map((p) => (p.id === id ? { ...p, likes: (p.likes || 0) + 1 } : p));
-    await persist(next);
-  };
-
-  const onDelete = async (id) => {
-    const target = posts.find((p) => p.id === id);
-    const mineFromServer = target?.isMine;
-    const mineFromAuthor = target?.authorId && myId ? target.authorId === myId : false;
-    const mineFromLocal = myPostSet.has(id);
-    const isMine = mineFromServer !== undefined ? !!mineFromServer : mineFromAuthor || mineFromLocal;
-
-    if (!isMine) {
-      Alert.alert('삭제', '본인이 작성한 글만 삭제할 수 있어요.');
-      return;
+    try {
+      const created = await boardApi.createPost({ content: body });
+      const normalized = normalizeListPost(created);
+      setContent('');
+      setComposeOpen(false);
+      if (normalized) {
+        setPosts((prev) => [normalized, ...prev]);
+      } else {
+        await loadPosts({ page: 0, keyword: keywordRef.current });
+      }
+    } catch (e) {
+      if (e?.status === 400) Alert.alert('작성 실패', '내용을 입력해주세요.');
+      else Alert.alert('작성 실패', e?.message || '게시글을 작성하지 못했습니다.');
     }
+  }, [content, loadPosts]);
 
+  const onToggleLike = useCallback(async (item) => {
+    if (!item) return;
+    const targetId = item.id;
+    const optimisticLike = !item.liked;
+
+    setPosts((prev) =>
+        prev.map((p) => {
+          if (p.id !== targetId) return p;
+          const likes = toNumber(p.likesNum);
+          const nextLikes = optimisticLike ? likes + 1 : Math.max(0, likes - 1);
+          return { ...p, liked: optimisticLike, likesNum: nextLikes, likeBusy: true };
+        })
+    );
+
+    try {
+      const res = optimisticLike
+          ? await boardApi.likeOn(targetId, { likeNum: item.likesNum })
+          : await boardApi.likeOff(targetId);
+
+      const likesFromRes =
+          res?.likesNum ?? res?.likeNum ?? res?.likes ?? res?.likeCount ?? res?.data?.likesNum;
+      const likedFromRes = res?.liked ?? res?.isLiked ?? res?.likeYn ?? res?.likeStatus;
+
+      setPosts((prev) =>
+          prev.map((p) => {
+            if (p.id !== targetId) return p;
+            return {
+              ...p,
+              likesNum: likesFromRes !== undefined ? toNumber(likesFromRes) : p.likesNum,
+              liked: likedFromRes !== undefined ? parseLiked(likedFromRes) : p.liked,
+              likeBusy: false,
+            };
+          })
+      );
+    } catch (e) {
+      setPosts((prev) =>
+          prev.map((p) => {
+            if (p.id !== targetId) return p;
+            const likes = toNumber(p.likesNum);
+            const restoredLikes = optimisticLike ? Math.max(0, likes - 1) : likes + 1;
+            return { ...p, liked: !optimisticLike, likesNum: restoredLikes, likeBusy: false };
+          })
+      );
+      Alert.alert('좋아요 실패', e?.message || '좋아요 처리에 실패했습니다.');
+    }
+  }, []);
+
+  const onDelete = useCallback((id) => {
     Alert.alert('삭제', '정말 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       {
         text: '삭제',
         style: 'destructive',
         onPress: async () => {
-          const next = posts.filter((p) => p.id !== id);
-          await persist(next);
-          setMyPosts((prev) => {
-            if (!prev.includes(id)) return prev;
-            const updated = prev.filter((pid) => pid !== id);
-            AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(updated)).catch((e) =>
-                console.warn('Failed to save my posts', e)
-            );
-            return updated;
-          });
+          try {
+            await boardApi.deletePost(id);
+            setPosts((prev) => prev.filter((p) => p.id !== id));
+          } catch (e) {
+            Alert.alert('삭제 실패', e?.message || '게시글을 삭제하지 못했습니다.');
+          }
         },
       },
     ]);
-  };
+  }, []);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return posts;
-    return posts.filter((p) => p.content.toLowerCase().includes(q) || p.nickname.toLowerCase().includes(q));
-  }, [posts, search]);
-
-  const renderItem = ({ item }) => {
-    const isMine = (() => {
-      if (item?.isMine !== undefined) return !!item.isMine;
-      if (item?.authorId && myId) return item.authorId === myId;
-      return myPostSet.has(item.id);
-    })();
-
-    return (
-        <TouchableOpacity
-            activeOpacity={0.9}
-            onPress={() =>
-                router.push({
-                  pathname: '/post/[id]',
-                  params: { id: String(item.id) },
-                })
-            }
-            style={styles.card}
-        >
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardNick}>{item.nickname || '익명'}</Text>
-            <Text style={styles.cardDate}>{formatKST(item.createdAt)}</Text>
-          </View>
-
-          <Text style={styles.cardBody}>{item.content}</Text>
-
-          <View style={styles.cardActions}>
-            <View style={styles.pill}>
-              <Text style={styles.pillText}>💬 {item.commentCount || 0}</Text>
-            </View>
-
-            <Pressable
-                style={styles.pill}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  onLike(item.id);
-                }}
-                hitSlop={6}
+  const renderItem = useCallback(
+      ({ item }) => {
+        const mine = isMineByUser(item, meId, meNickname);
+        return (
+            <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() =>
+                    router.push({
+                      pathname: '/post/[id]',
+                      params: { id: String(item.id) },
+                    })
+                }
+                style={styles.card}
             >
-              <Text style={styles.pillText}>❤️ {item.likes || 0}</Text>
-            </Pressable>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardNick}>{item.nickname || '익명'}</Text>
+                <Text style={styles.cardDate}>{formatKST(item.createdAt)}</Text>
+              </View>
 
-            <View style={{ flex: 1 }} />
+              <Text style={styles.cardBody}>{item.content}</Text>
 
-            {isMine && (
+              <View style={styles.cardActions}>
+                <View style={styles.pill}>
+                  <Text style={styles.pillText}>💬 {toNumber(item.commentsNum)}</Text>
+                </View>
+
                 <Pressable
-                    style={[styles.pill, styles.danger]}
+                    style={styles.pill}
                     onPress={(e) => {
                       e.stopPropagation();
-                      onDelete(item.id);
+                      onToggleLike(item);
                     }}
+                    disabled={item.likeBusy}
                     hitSlop={6}
                 >
-                  <Text style={[styles.pillText, { color: '#b91c1c' }]}>삭제</Text>
+                  <Text style={styles.pillText}>
+                    {item.liked ? '💖' : '❤️'} {toNumber(item.likesNum)}
+                  </Text>
                 </Pressable>
-            )}
-          </View>
-        </TouchableOpacity>
+
+                <View style={{ flex: 1 }} />
+
+                {mine && (
+                    <Pressable
+                        style={[styles.pill, styles.danger]}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          onDelete(item.id);
+                        }}
+                        hitSlop={6}
+                    >
+                      <Text style={[styles.pillText, { color: '#b91c1c' }]}>삭제</Text>
+                    </Pressable>
+                )}
+              </View>
+            </TouchableOpacity>
+        );
+      },
+      [meId, meNickname, onDelete, onToggleLike]
+  );
+
+  const listEmpty = useMemo(() => {
+    if (loading || refreshing) return <Text style={styles.empty}>불러오는 중…</Text>;
+    return <Text style={styles.empty}>게시글이 없습니다.</Text>;
+  }, [loading, refreshing]);
+
+  const listFooter = useMemo(() => {
+    if (!loadingMore) return null;
+    return (
+        <View style={{ paddingVertical: 16 }}>
+          <Text style={{ textAlign: 'center', color: '#9ca3af' }}>불러오는 중…</Text>
+        </View>
     );
-  };
+  }, [loadingMore]);
 
   return (
       <SafeAreaView style={styles.safe}>
-        {/* Header (ChatScreen과 동일 패턴) */}
         <View style={styles.header}>
           <TouchableOpacity
               onPress={() => router.back()}
@@ -265,7 +392,6 @@ export default function BoardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* 검색 & 글쓰기 */}
         <View style={styles.searchRow}>
           <TextInput
               value={search}
@@ -281,16 +407,24 @@ export default function BoardScreen() {
         </View>
 
         <FlatList
-            data={filtered}
-            keyExtractor={(item) => item.id}
+            data={posts}
+            keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-            ListEmptyComponent={<Text style={styles.empty}>첫 글을 남겨 보세요! </Text>}
+            ListEmptyComponent={listEmpty}
+            ListFooterComponent={listFooter}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            onEndReached={onEndReached}
+            onEndReachedThreshold={0.5}
             showsVerticalScrollIndicator={false}
         />
 
-        {/* 글쓰기 모달 */}
-        <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
+        <Modal
+            visible={composeOpen}
+            animationType="slide"
+            onRequestClose={() => setComposeOpen(false)}
+        >
           <KeyboardAvoidingView
               style={[styles.modalSafe, { paddingTop: insets.top + 8 }]}
               behavior={Platform.select({ ios: 'padding', android: undefined })}
@@ -304,14 +438,6 @@ export default function BoardScreen() {
             </View>
 
             <View style={styles.modalBody}>
-              <TextInput
-                  value={nick}
-                  onChangeText={setNick}
-                  placeholder="닉네임 (미입력 시 익명)"
-                  placeholderTextColor="#9ca3af"
-                  style={styles.nick}
-                  maxLength={20}
-              />
               <TextInput
                   value={content}
                   onChangeText={setContent}
@@ -335,7 +461,6 @@ export default function BoardScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },
 
-  /** Header - ChatScreen과 동일 패턴 */
   header: {
     height: 56,
     paddingHorizontal: 14,
@@ -353,7 +478,6 @@ const styles = StyleSheet.create({
   headerTitle: { color: TEXT_MAIN, fontSize: 17, fontWeight: '700' },
   headerIcon: { color: TEXT_SUB, fontSize: 22 },
 
-  /** 검색 & 액션 */
   searchRow: {
     flexDirection: 'row',
     gap: 8,
@@ -381,7 +505,6 @@ const styles = StyleSheet.create({
   },
   composeBtnText: { color: '#fff', fontWeight: '700' },
 
-  /** 카드 */
   card: {
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -407,7 +530,6 @@ const styles = StyleSheet.create({
 
   empty: { textAlign: 'center', color: '#9ca3af', paddingTop: 48 },
 
-  /** 모달 */
   modalSafe: { flex: 1, backgroundColor: '#fff' },
   modalHeader: {
     paddingHorizontal: 16,
@@ -420,15 +542,6 @@ const styles = StyleSheet.create({
   cancel: { color: '#6b7280', fontWeight: '700' },
   modalTitle: { fontSize: 18, fontWeight: '800' },
   modalBody: { padding: 16, gap: 10 },
-  nick: {
-    height: 44,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff',
-    color: '#111827',
-  },
   textarea: {
     minHeight: 160,
     borderWidth: 1,
