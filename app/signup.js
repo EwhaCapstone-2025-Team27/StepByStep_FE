@@ -1,8 +1,17 @@
 // screens/SignUpScreen.js
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { authApi } from '../lib/apiClient.js';
+import {
+    normalizeGenderForApi,
+    sanitizeBirthYearInput,
+    validateBirthYear,
+    validateEmail,
+    validateGender,
+    validateNickname,
+    validatePassword,
+} from '../lib/validation.js';
 
 export default function SignUpScreen() {
     const [nickname, setNickname] = useState('');
@@ -14,30 +23,63 @@ export default function SignUpScreen() {
     const [nickOk, setNickOk] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    const currentYear = useMemo(() => new Date().getFullYear(), []);
+    const checkNickname = async (value) => {
+        const base = typeof value === 'string' ? value : nickname;
+        const trimmed = base.trim();
+        if (!trimmed) {
+            setNickOk(null);
+            return null;
+        }
 
-    const checkNickname = async () => {
-        if (!nickname.trim()) return;
+        if (validateNickname(trimmed) !== null) {
+            // 형식이 올바르지 않으면 서버 호출 없이 상태만 초기화
+            setNickOk(null);
+            return null;
+        }
         try {
-            const data = await authApi.checkNickname(nickname.trim());
+            const data = await authApi.checkNickname(trimmed);
             const available = [data?.available, data?.isAvailable, data?.ok]
                 .find((v) => typeof v === 'boolean');
             setNickOk(typeof available === 'boolean' ? available : null);
-        } catch {
+            return typeof available === 'boolean' ? available : null;
+        } catch (err) {
+            if (err?.status === 409) {
+                setNickOk(false);
+                return false;
+            }
             setNickOk(null);
+            return null;
         }
     };
 
     const onRegister = async () => {
-        if (!nickname.trim()) return Alert.alert('회원가입', '닉네임을 입력하세요.');
-        if (nickOk === false) return Alert.alert('회원가입', '이미 사용 중인 닉네임입니다.');
-        if (!email.trim()) return Alert.alert('회원가입', '이메일을 입력하세요.');
-        if (pw.length < 8) return Alert.alert('회원가입', '비밀번호는 8자 이상이어야 합니다.');
-        if (pw !== pw2) return Alert.alert('회원가입', '비밀번호가 일치하지 않습니다.');
-        const by = Number(birthYear);
-        if (!by || by < 1900 || by > currentYear) {
-            return Alert.alert('회원가입', '태어난 해를 정확히 입력하세요.');
+        const trimmedNickname = nickname.trim();
+        const nicknameError = validateNickname(trimmedNickname);
+        if (nicknameError) return Alert.alert('회원가입', nicknameError);
+
+        if (nickOk !== true) {
+            const available = await checkNickname(trimmedNickname);
+            if (available === false) {
+                return Alert.alert('회원가입', '이미 사용 중인 닉네임입니다.');
+            }
         }
+
+        const emailError = validateEmail(email);
+        if (emailError) return Alert.alert('회원가입', emailError);
+
+        const passwordError = validatePassword(pw);
+        if (passwordError) return Alert.alert('회원가입', passwordError);
+        const passwordConfirmError = validatePassword(pw2, { label: '비밀번호 확인' });
+        if (passwordConfirmError) return Alert.alert('회원가입', passwordConfirmError);
+        if (pw !== pw2) return Alert.alert('회원가입', '비밀번호가 일치하지 않습니다.');
+
+        const genderError = validateGender(gender);
+        if (genderError) return Alert.alert('회원가입', genderError);
+
+        const birthError = validateBirthYear(birthYear);
+        if (birthError) return Alert.alert('회원가입', birthError);
+        const sanitizedYear = sanitizeBirthYearInput(birthYear);
+        const by = Number(sanitizedYear);
 
         try {
             setLoading(true);
@@ -45,8 +87,8 @@ export default function SignUpScreen() {
                 email: email.trim(),
                 password: pw,
                 passwordConfirm: pw2,
-                nickname: nickname.trim(),
-                gender,
+                nickname: trimmedNickname,
+                gender: normalizeGenderForApi(gender) ?? gender,
                 birthYear: by,
             });
             Alert.alert('가입 완료', '환영합니다!', [{ text: '확인', onPress: () => router.replace('/login') }]);
@@ -67,17 +109,18 @@ export default function SignUpScreen() {
 
                 <TextInput
                     style={S.input}
-                    placeholder="닉네임 (중복 금지)"
+                    placeholder="닉네임 (3~10자, 한글/영문/숫자)"
                     value={nickname}
                     onChangeText={(t) => { setNickname(t); setNickOk(null); }}
-                    onBlur={checkNickname}
+                    onBlur={() => checkNickname()}
+                    maxLength={10}
                 />
                 {nickOk === false && <Text style={S.err}>이미 사용 중인 닉네임입니다.</Text>}
                 {nickOk === true  && <Text style={S.ok}>사용 가능한 닉네임입니다.</Text>}
 
                 <TextInput style={S.input} placeholder="이메일" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-                <TextInput style={S.input} placeholder="비밀번호 (8자 이상)" value={pw} onChangeText={setPw} secureTextEntry />
-                <TextInput style={S.input} placeholder="비밀번호 확인" value={pw2} onChangeText={setPw2} secureTextEntry />
+                <TextInput style={S.input} placeholder="비밀번호 (8~20자)" value={pw} onChangeText={setPw} secureTextEntry maxLength={20} />
+                <TextInput style={S.input} placeholder="비밀번호 확인" value={pw2} onChangeText={setPw2} secureTextEntry maxLength={20} />
 
                 <View style={S.row}>
                     <TouchableOpacity
@@ -98,7 +141,7 @@ export default function SignUpScreen() {
                     style={S.input}
                     placeholder="태어난 해 (예: 2010)"
                     value={birthYear}
-                    onChangeText={setBirthYear}
+                    onChangeText={(value) => setBirthYear(sanitizeBirthYearInput(value))}
                     keyboardType="number-pad"
                     maxLength={4}
                 />

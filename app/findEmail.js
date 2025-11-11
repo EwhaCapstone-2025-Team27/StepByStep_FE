@@ -1,22 +1,29 @@
 // screens/FindIdScreen.js
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { authApi } from '../lib/apiClient.js';
+import {
+    sanitizeBirthYearInput,
+    validateBirthYear,
+    validateGender,
+    validateNickname,
+} from '../lib/validation.js';
 
 export default function FindIdScreen() {
     const [nickname, setNickname] = useState('');
     const [gender, setGender] = useState('');
     const [birthYear, setBirthYear] = useState('');
-    const currentYear = useMemo(() => new Date().getFullYear(), []);
-
     const onFind = async () => {
-        if (!nickname.trim()) return Alert.alert('아이디 찾기', '닉네임을 입력하세요.');
-        if (!gender) return Alert.alert('아이디 찾기', '성별을 선택하세요.');
-        const by = Number(birthYear);
-        if (!by || by < 1900 || by > currentYear) {
-            return Alert.alert('아이디 찾기', '출생년도를 정확히 입력하세요.');
-        }
+        const nicknameError = validateNickname(nickname);
+        if (nicknameError) return Alert.alert('아이디 찾기', nicknameError);
+
+        const genderError = validateGender(gender);
+        if (genderError) return Alert.alert('아이디 찾기', genderError);
+
+        const birthError = validateBirthYear(birthYear);
+        if (birthError) return Alert.alert('아이디 찾기', birthError);
+        const by = Number(sanitizeBirthYearInput(birthYear));
         try {
             const data = await authApi.findEmail({
                 nickname: nickname.trim(),
@@ -42,7 +49,13 @@ export default function FindIdScreen() {
                     <Text style={{ fontSize:16, color:'#6b7280' }}>‹ 로그인으로</Text>
                 </TouchableOpacity>
                 <Text style={S.title}>아이디 찾기</Text>
-                <TextInput style={S.input} placeholder="닉네임" value={nickname} onChangeText={setNickname} />
+                <TextInput
+                    style={S.input}
+                    placeholder="닉네임 (3~10자, 한글/영문/숫자)"
+                    value={nickname}
+                    onChangeText={setNickname}
+                    maxLength={10}
+                />
                 <View style={S.row}>
                     <TouchableOpacity
                         style={[S.seg, gender === 'M' && S.segOn]}
@@ -61,7 +74,7 @@ export default function FindIdScreen() {
                     style={S.input}
                     placeholder="출생년도 (예: 2010)"
                     value={birthYear}
-                    onChangeText={setBirthYear}
+                    onChangeText={(value) => setBirthYear(sanitizeBirthYearInput(value))}
                     keyboardType="number-pad"
                     maxLength={4}
                 />

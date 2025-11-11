@@ -3,12 +3,14 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { authApi } from '../lib/apiClient.js';
+import { validateEmail } from '../lib/validation.js';
 
 export default function ResetPasswordScreen() {
     const [email, setEmail] = useState('');
 
     const onSend = async () => {
-        if (!email.trim()) return Alert.alert('비밀번호 재설정', '이메일을 입력하세요.');
+        const emailError = validateEmail(email);
+        if (emailError) return Alert.alert('비밀번호 재설정', emailError);
         try {
             await authApi.requestTemporaryPassword({ email: email.trim() });
             Alert.alert('임시 비밀번호 발송', '해당 메일로 임시 비밀번호가 전송되었습니다. 확인해주세요.', [

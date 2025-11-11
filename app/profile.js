@@ -15,6 +15,15 @@ import {
 } from 'react-native';
 import { useAuth } from '../lib/auth-context';
 import { authApi, userApi } from '../lib/apiClient';
+import {
+  normalizeGenderForApi,
+  normalizeGenderForState,
+  sanitizeBirthYearInput,
+  validateBirthYear,
+  validateGender,
+  validateNickname,
+  validatePassword,
+} from '../lib/validation.js';
 
 export default function ProfileEditScreen() {
   const [nickname, setNickname] = useState('');
@@ -30,20 +39,6 @@ export default function ProfileEditScreen() {
   const [deleting, setDeleting] = useState(false);
   const { setTokens, logout } = useAuth();
 
-  const normalizeGender = (value) => {
-    if (!value) return 'other';
-    const lower = String(value).toLowerCase();
-    if (lower === 'male' || lower === 'm') return 'male';
-    if (lower === 'female' || lower === 'f') return 'female';
-    return 'other';
-  };
-
-  const serializeGender = (value) => {
-    if (value === 'male') return 'M';
-    if (value === 'female') return 'F';
-    return value;
-  };
-
   // 내 정보 불러오기(선택)
   useEffect(() => {
     (async () => {
@@ -51,21 +46,27 @@ export default function ProfileEditScreen() {
         const me = await userApi.me();
         if (!me) return;
         setNickname(me.nickname ?? '');
-        setGender(normalizeGender(me.gender));
-        setBirthYear(me.birthYear ? String(me.birthYear) : '');
+        setGender(normalizeGenderForState(me.gender) ?? 'other');
+        setBirthYear(me.birthYear ? sanitizeBirthYearInput(String(me.birthYear)) : '');
         await setTokens({ user: me });
       } catch {}
     })();
   }, [setTokens]);
 
   const validateProfile = () => {
-    if (!nickname.trim()) {
-      Alert.alert('입력 오류', '닉네임을 입력하세요.');
+    const nicknameError = validateNickname(nickname);
+    if (nicknameError) {
+      Alert.alert('입력 오류', nicknameError);
       return false;
     }
-    const by = Number(birthYear);
-    if (!by || by < 1900 || by > new Date().getFullYear()) {
-      Alert.alert('입력 오류', '태어난 연도를 정확히 입력하세요.');
+    const genderError = validateGender(gender);
+    if (genderError) {
+      Alert.alert('입력 오류', genderError);
+      return false;
+    }
+    const birthError = validateBirthYear(birthYear);
+    if (birthError) {
+      Alert.alert('입력 오류', birthError);
       return false;
     }
     return true;
@@ -73,21 +74,24 @@ export default function ProfileEditScreen() {
 
   const hasPwChange = () => Boolean(currentPw || newPw || newPw2);
 
-  const validatePassword = () => {
+  const validatePasswordChange = () => {
     const trimmedCurrent = currentPw.trim();
     const trimmedNew = newPw.trim();
     const trimmedConfirm = newPw2.trim();
 
-    if (!trimmedCurrent) {
-      Alert.alert('입력 오류', '현재 비밀번호를 입력하세요.');
+    const currentError = validatePassword(trimmedCurrent, { label: '현재 비밀번호' });
+    if (currentError) {
+      Alert.alert('입력 오류', currentError);
       return false;
     }
-    if (!trimmedNew || !trimmedConfirm) {
-      Alert.alert('입력 오류', '새 비밀번호와 확인을 입력하세요.');
+    const newError = validatePassword(trimmedNew, { label: '새 비밀번호' });
+    if (newError) {
+      Alert.alert('입력 오류', newError);
       return false;
     }
-    if (trimmedNew.length < 8) {
-      Alert.alert('입력 오류', '새 비밀번호는 8자 이상이어야 합니다.');
+    const confirmError = validatePassword(trimmedConfirm, { label: '새 비밀번호 확인' });
+    if (confirmError) {
+      Alert.alert('입력 오류', confirmError);
       return false;
     }
     if (trimmedCurrent === trimmedNew) {
@@ -104,20 +108,25 @@ export default function ProfileEditScreen() {
   const onSaveAll = async () => {
     const wantsPwChange = hasPwChange();
     if (!validateProfile()) return;
-    if (wantsPwChange && !validatePassword()) return;
+    if (wantsPwChange && !validatePasswordChange()) return;
 
     setLoading(true);
     try {
+      const genderForApi = normalizeGenderForApi(gender);
+      if (!genderForApi) {
+        Alert.alert('입력 오류', '성별을 선택하세요.');
+        return;
+      }
       // 1) 프로필 저장
       const updated = await userApi.update({
         nickname: nickname.trim(),
-        gender: serializeGender(gender),
-        birthYear: Number(birthYear),
+        gender: genderForApi,
+        birthYear: Number(sanitizeBirthYearInput(birthYear)),
       });
       if (updated) {
         setNickname(updated.nickname ?? nickname.trim());
-        setGender(normalizeGender(updated.gender));
-        setBirthYear(updated.birthYear ? String(updated.birthYear) : String(birthYear));
+        setGender(normalizeGenderForState(updated.gender) ?? gender);
+        setBirthYear(updated.birthYear ? sanitizeBirthYearInput(String(updated.birthYear)) : sanitizeBirthYearInput(String(birthYear)));
         await setTokens({ user: updated });
       }
 
@@ -206,8 +215,8 @@ export default function ProfileEditScreen() {
             style={S.input}
             value={nickname}
             onChangeText={setNickname}
-            placeholder="닉네임"
-            maxLength={20}
+            placeholder="닉네임 (3~10자, 한글/영문/숫자)"
+            maxLength={10}
           />
 
           {/* 성별 */}
@@ -227,7 +236,7 @@ export default function ProfileEditScreen() {
             style={S.input}
             placeholder="예: 2010"
             value={birthYear}
-            onChangeText={(t) => setBirthYear(t.replace(/[^0-9]/g, ''))}
+            onChangeText={(t) => setBirthYear(sanitizeBirthYearInput(t))}
             keyboardType="number-pad"
             maxLength={4}
           />

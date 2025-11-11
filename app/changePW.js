@@ -15,9 +15,9 @@ import {
 } from 'react-native';
 import { authApi } from '../lib/apiClient';
 import { useAuth } from '../lib/auth-context';
+import { validatePassword } from '../lib/validation.js';
 
 export default function ChangePasswordScreen() {
-    const [currentPw, setCurrentPw] = useState('');
     const [newPw, setNewPw] = useState('');
     const [confirmPw, setConfirmPw] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -26,24 +26,16 @@ export default function ChangePasswordScreen() {
     const logout = auth?.logout ?? (async () => {});
 
     const validate = () => {
-        const trimmedCurrent = currentPw.trim();
         const trimmedNew = newPw.trim();
         const trimmedConfirm = confirmPw.trim();
-
-        if (!trimmedCurrent) {
-            Alert.alert('입력 오류', '현재(임시) 비밀번호를 입력하세요.');
+        const newError = validatePassword(trimmedNew, { label: '새 비밀번호' });
+        if (newError) {
+            Alert.alert('입력 오류', newError);
             return false;
         }
-        if (!trimmedNew || !trimmedConfirm) {
-            Alert.alert('입력 오류', '새 비밀번호와 확인을 입력하세요.');
-            return false;
-        }
-        if (trimmedNew.length < 8) {
-            Alert.alert('입력 오류', '새 비밀번호는 8자 이상이어야 합니다.');
-            return false;
-        }
-        if (trimmedCurrent === trimmedNew) {
-            Alert.alert('입력 오류', '새 비밀번호는 현재 비밀번호와 달라야 합니다.');
+        const confirmError = validatePassword(trimmedConfirm, { label: '새 비밀번호 확인' });
+        if (confirmError) {
+            Alert.alert('입력 오류', confirmError);
             return false;
         }
         if (trimmedNew !== trimmedConfirm) {
@@ -58,17 +50,14 @@ export default function ChangePasswordScreen() {
 
         setSubmitting(true);
         try {
-            const trimmedCurrent = currentPw.trim();
             const trimmedNew = newPw.trim();
             const trimmedConfirm = confirmPw.trim();
 
             await authApi.changePassword({
-                currentPassword: trimmedCurrent,
                 newPassword: trimmedNew,
                 newPasswordConfirm: trimmedConfirm,
             });
 
-            setCurrentPw('');
             setNewPw('');
             setConfirmPw('');
 
@@ -99,18 +88,10 @@ export default function ChangePasswordScreen() {
                 <View style={S.wrap}>
                     <Text style={S.title}>비밀번호 변경</Text>
                     <Text style={S.subtitle}>
-                        임시 비밀번호로 로그인하셨어요. 보안을 위해 새 비밀번호로 변경한 뒤 다시 로그인해주세요.
+                        임시 비밀번호로 로그인했으므로 보안을 위해 새 비밀번호로 변경한 뒤 다시 로그인해주세요.
                     </Text>
 
                     <View style={S.form}>
-                        <TextInput
-                            style={S.input}
-                            value={currentPw}
-                            onChangeText={setCurrentPw}
-                            placeholder="현재(임시) 비밀번호"
-                            secureTextEntry
-                            autoCapitalize="none"
-                        />
                         <TextInput
                             style={S.input}
                             value={newPw}
