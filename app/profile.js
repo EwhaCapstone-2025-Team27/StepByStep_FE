@@ -1,6 +1,6 @@
 // app/profile.js
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -25,10 +25,47 @@ import {
   validatePassword,
 } from '../lib/validation.js';
 
+const extractBirthYearFromSource = (source) => {
+  if (!source) return '';
+  const candidates = [
+    source.birthyear,
+    source.profile?.birthyear,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const sanitized = sanitizeBirthYearInput(String(candidate));
+    if (sanitized) return sanitized;
+  }
+
+  return '';
+};
+
+const mergeUserAfterProfileUpdate = (previousUser, updatedUser, birthYearNumericValue) => {
+  const prev = previousUser ?? {};
+  const next = updatedUser ?? {};
+
+  const merged = { ...prev, ...next };
+
+  const shouldMergeProfile = prev.profile || next.profile || birthYearNumericValue !== undefined;
+  if (shouldMergeProfile) {
+    merged.profile = { ...(prev.profile ?? {}), ...(next.profile ?? {}) };
+  }
+
+  if (birthYearNumericValue !== undefined) {
+    merged.birthyear = birthYearNumericValue;
+    if (merged.profile) {
+      merged.profile.birthyear = birthYearNumericValue;
+    }
+  }
+
+  return merged;
+};
+
 export default function ProfileEditScreen() {
   const [nickname, setNickname] = useState('');
-  const [gender, setGender] = useState('female');
-  const [birthYear, setBirthYear] = useState('');
+  const [gender, setGender] = useState('');
+  const [birthyear, setBirthyear] = useState('');
 
   // 비밀번호(선택)
   const [currentPw, setCurrentPw] = useState('');
@@ -37,7 +74,22 @@ export default function ProfileEditScreen() {
 
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const { setTokens, logout } = useAuth();
+  const { user, setTokens, logout } = useAuth();
+
+  const populateProfile = useCallback(
+      (source) => {
+        if (!source) return;
+        setNickname(source.nickname ?? '');
+        const normalizedGender = normalizeGenderForState(source.gender);
+        setGender(normalizedGender ?? '');
+        setBirthyear(extractBirthYearFromSource(source));
+      },
+      [setNickname, setGender, setBirthyear]
+  );
+
+  useEffect(() => {
+    populateProfile(user);
+  }, [user, populateProfile]);
 
   // 내 정보 불러오기(선택)
   useEffect(() => {
@@ -45,13 +97,11 @@ export default function ProfileEditScreen() {
       try {
         const me = await userApi.me();
         if (!me) return;
-        setNickname(me.nickname ?? '');
-        setGender(normalizeGenderForState(me.gender) ?? 'other');
-        setBirthYear(me.birthYear ? sanitizeBirthYearInput(String(me.birthYear)) : '');
+        populateProfile(me);
         await setTokens({ user: me });
       } catch {}
     })();
-  }, [setTokens]);
+  }, [populateProfile, setTokens]);
 
   const validateProfile = () => {
     const nicknameError = validateNickname(nickname);
@@ -64,7 +114,7 @@ export default function ProfileEditScreen() {
       Alert.alert('입력 오류', genderError);
       return false;
     }
-    const birthError = validateBirthYear(birthYear);
+    const birthError = validateBirthYear(birthyear);
     if (birthError) {
       Alert.alert('입력 오류', birthError);
       return false;
@@ -117,19 +167,28 @@ export default function ProfileEditScreen() {
         Alert.alert('입력 오류', '성별을 선택하세요.');
         return;
       }
+      const sanitizedBirthYear = sanitizeBirthYearInput(birthyear);
+      const birthYearNumericForApi =
+          sanitizedBirthYear && sanitizedBirthYear.length === 4
+              ? Number(sanitizedBirthYear)
+              : undefined;
       // 1) 프로필 저장
-      const updated = await userApi.update({
+      const updatePayload = {
         nickname: nickname.trim(),
         gender: genderForApi,
-        birthYear: Number(sanitizeBirthYearInput(birthYear)),
-      });
-      if (updated) {
-        setNickname(updated.nickname ?? nickname.trim());
-        setGender(normalizeGenderForState(updated.gender) ?? gender);
-        setBirthYear(updated.birthYear ? sanitizeBirthYearInput(String(updated.birthYear)) : sanitizeBirthYearInput(String(birthYear)));
-        await setTokens({ user: updated });
+      };
+      if (birthYearNumericForApi !== undefined) {
+        updatePayload.birthyear = birthYearNumericForApi;
       }
 
+      const updated = await userApi.update(updatePayload);
+      const mergedUser = mergeUserAfterProfileUpdate(
+          user,
+          updated,
+          birthYearNumericForApi
+      );
+      populateProfile(mergedUser);
+      await setTokens({ user: mergedUser });
       // 2) 비밀번호 변경(선택)
       if (wantsPwChange) {
         const trimmedCurrent = currentPw.trim();
@@ -235,8 +294,8 @@ export default function ProfileEditScreen() {
           <TextInput
             style={S.input}
             placeholder="예: 2010"
-            value={birthYear}
-            onChangeText={(t) => setBirthYear(sanitizeBirthYearInput(t))}
+            value={birthyear}
+            onChangeText={(t) => setBirthyear(sanitizeBirthYearInput(t))}
             keyboardType="number-pad"
             maxLength={4}
           />
