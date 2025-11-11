@@ -14,6 +14,18 @@ import {
 } from 'react-native';
 import { authApi } from '../lib/apiClient.js';
 import { useAuth } from '../lib/auth-context.js';
+import { validateEmail, validatePassword } from '../lib/validation.js';
+
+const isTruthyFlag = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === '') return false;
+  }
+  return Boolean(value);
+};
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -27,31 +39,33 @@ export default function LoginScreen() {
     if (!authApi || typeof authApi.login !== 'function') {
       return Alert.alert('로그인 실패', 'API 클라이언트를 불러오지 못했습니다. (authApi)');
     }
-    if (!email.trim() || !pw) {
-      return Alert.alert('로그인', '이메일과 비밀번호를 입력하세요.');
-    }
+    const emailError = validateEmail(email);
+    if (emailError) return Alert.alert('로그인', emailError);
+
+    const passwordError = validatePassword(pw);
+    if (passwordError) return Alert.alert('로그인', passwordError);
 
     try {
       setLoading(true);
 
       // 서버 규약: POST /api/auth/login
-      const res = await authApi.login({ email, password: pw });
+      const res = await authApi.login({ email: email.trim(), password: pw });
 
       // 다양한 응답 키 대응
       const accessToken =
-        res?.accessToken ?? res?.access_token ?? res?.token ?? res?.data?.accessToken ?? null;
+          res?.accessToken ?? res?.access_token ?? res?.token ?? res?.data?.accessToken ?? null;
       const refreshToken =
-        res?.refreshToken ?? res?.refresh_token ?? res?.data?.refreshToken ?? null;
+          res?.refreshToken ?? res?.refresh_token ?? res?.data?.refreshToken ?? null;
 
       const accessExpSec =
-        res?.accessTokenExpiresIn ?? res?.access_expires_in ?? res?.expires_in;
+          res?.accessTokenExpiresIn ?? res?.access_expires_in ?? res?.expires_in;
       const refreshExpSec =
-        res?.refreshTokenExpiresIn ?? res?.refresh_expires_in;
+          res?.refreshTokenExpiresIn ?? res?.refresh_expires_in;
 
       const nickname =
-        res?.nickname ?? res?.data?.nickname ?? res?.user?.nickname ?? res?.profile?.nickname ?? null;
+          res?.nickname ?? res?.data?.nickname ?? res?.user?.nickname ?? res?.profile?.nickname ?? null;
       const userId =
-        res?.userId ?? res?.data?.userId ?? res?.user?.id ?? res?.profile?.id ?? null;
+          res?.userId ?? res?.data?.userId ?? res?.user?.id ?? res?.profile?.id ?? null;
 
       if (!accessToken) throw new Error('토큰 발급에 실패했습니다.');
 
@@ -62,9 +76,9 @@ export default function LoginScreen() {
       };
 
       const accessTokenExpiresAt =
-        typeof accessExpSec === 'number' ? Date.now() + accessExpSec * 1000 : undefined;
+          typeof accessExpSec === 'number' ? Date.now() + accessExpSec * 1000 : undefined;
       const refreshTokenExpiresAt =
-        typeof refreshExpSec === 'number' ? Date.now() + refreshExpSec * 1000 : undefined;
+          typeof refreshExpSec === 'number' ? Date.now() + refreshExpSec * 1000 : undefined;
 
       // 로컬 저장(다른 화면에서 바로 사용)
       await AsyncStorage.multiSet([
@@ -101,10 +115,31 @@ export default function LoginScreen() {
         res?.profile?.requiresProfileUpdate,
       ];
 
-      const shouldGoProfile = [...tempPwFlags, ...forceProfileFlags].some((v) => Boolean(v));
+      const mustChangePasswordFlags = [
+        res?.mustChangePassword,
+        res?.must_change_password,
+        res?.forcePasswordChange,
+        res?.force_password_change,
+        res?.data?.mustChangePassword,
+        res?.data?.must_change_password,
+        res?.data?.forcePasswordChange,
+        res?.data?.force_password_change,
+        res?.user?.mustChangePassword,
+        res?.user?.must_change_password,
+        res?.user?.forcePasswordChange,
+        res?.user?.force_password_change,
+        res?.profile?.mustChangePassword,
+        res?.profile?.must_change_password,
+        res?.profile?.forcePasswordChange,
+        res?.profile?.force_password_change,
+      ];
+
+      const shouldGoProfile = [...tempPwFlags, ...forceProfileFlags, ...mustChangePasswordFlags].some(
+          (v) => isTruthyFlag(v)
+      );
 
       if (shouldGoProfile) {
-        router.replace('/api/users/me/change-password');
+        router.replace('/changePW');
         setTimeout(() => {
           Alert.alert(
               '비밀번호 변경 필요',
@@ -116,54 +151,62 @@ export default function LoginScreen() {
 
       router.replace('/home');
     } catch (err) {
-      Alert.alert('로그인 실패', err?.message || '로그인에 실패했습니다. 이메일과 비밀번호를 다시 입력해주세요.');
+      let message = err?.message || '로그인에 실패했습니다. 이메일과 비밀번호를 다시 확인하세요.';
+      if (err?.status === 404) {
+        message = '가입된 이메일을 찾을 수 없습니다.';
+      } else if (err?.status === 401) {
+        message = '비밀번호가 일치하지 않습니다.';
+      } else if (err?.status === 403) {
+        message = '탈퇴한 계정입니다. 고객센터로 문의해주세요.';
+      }
+      Alert.alert('로그인 실패', message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <SafeAreaView style={S.safe}>
-      <View style={S.wrap}>
-        <View style={S.header}>
-          <Image source={require('../image/img/bot.png')} style={S.logo} resizeMode="contain" />
-          <Text style={S.title}>로그인</Text>
-        </View>
+      <SafeAreaView style={S.safe}>
+        <View style={S.wrap}>
+          <View style={S.header}>
+            <Image source={require('../image/img/bot.png')} style={S.logo} resizeMode="contain" />
+            <Text style={S.title}>로그인</Text>
+          </View>
 
-        <View style={S.form}>
-          <TextInput
-            style={S.input}
-            value={email}
-            onChangeText={setEmail}
-            placeholder="이메일"
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-          <TextInput
-            style={S.input}
-            value={pw}
-            onChangeText={setPw}
-            placeholder="비밀번호"
-            secureTextEntry
-          />
-          <TouchableOpacity style={[S.btn, S.primary]} onPress={onLogin} disabled={loading}>
-            <Text style={S.btnTextWhite}>{loading ? '로그인 중...' : '로그인'}</Text>
-          </TouchableOpacity>
-        </View>
+          <View style={S.form}>
+            <TextInput
+                style={S.input}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="이메일"
+                keyboardType="email-address"
+                autoCapitalize="none"
+            />
+            <TextInput
+                style={S.input}
+                value={pw}
+                onChangeText={setPw}
+                placeholder="비밀번호"
+                secureTextEntry
+            />
+            <TouchableOpacity style={[S.btn, S.primary]} onPress={onLogin} disabled={loading}>
+              <Text style={S.btnTextWhite}>{loading ? '로그인 중...' : '로그인'}</Text>
+            </TouchableOpacity>
+          </View>
 
-        <View style={S.links}>
-          <TouchableOpacity onPress={() => router.push('/signup')}>
-            <Text style={S.link}>회원가입</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/findEmail')}>
-            <Text style={S.link}>이메일 찾기</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/FindPw')}>
-            <Text style={S.link}>비밀번호 찾기</Text>
-          </TouchableOpacity>
+          <View style={S.links}>
+            <TouchableOpacity onPress={() => router.push('/signup')}>
+              <Text style={S.link}>회원가입</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/findEmail')}>
+              <Text style={S.link}>이메일 찾기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/FindPw')}>
+              <Text style={S.link}>비밀번호 찾기</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
   );
 }
 
