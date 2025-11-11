@@ -1,6 +1,6 @@
 // app/profile.js
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -25,9 +25,29 @@ import {
   validatePassword,
 } from '../lib/validation.js';
 
+const extractBirthYearFromSource = (source) => {
+  if (!source) return '';
+  const candidates = [
+    source.birthYear,
+    source.birthyear,
+    source.birth_year,
+    source.profile?.birthYear,
+    source.profile?.birthyear,
+    source.profile?.birth_year,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate == null) continue;
+    const sanitized = sanitizeBirthYearInput(String(candidate));
+    if (sanitized) return sanitized;
+  }
+
+  return '';
+};
+
 export default function ProfileEditScreen() {
   const [nickname, setNickname] = useState('');
-  const [gender, setGender] = useState('female');
+  const [gender, setGender] = useState('');
   const [birthYear, setBirthYear] = useState('');
 
   // 비밀번호(선택)
@@ -37,7 +57,22 @@ export default function ProfileEditScreen() {
 
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const { setTokens, logout } = useAuth();
+  const { user, setTokens, logout } = useAuth();
+
+  const populateProfile = useCallback(
+      (source) => {
+        if (!source) return;
+        setNickname(source.nickname ?? '');
+        const normalizedGender = normalizeGenderForState(source.gender);
+        setGender(normalizedGender ?? '');
+        setBirthYear(extractBirthYearFromSource(source));
+      },
+      [setNickname, setGender, setBirthYear]
+  );
+
+  useEffect(() => {
+    populateProfile(user);
+  }, [user, populateProfile]);
 
   // 내 정보 불러오기(선택)
   useEffect(() => {
@@ -45,13 +80,11 @@ export default function ProfileEditScreen() {
       try {
         const me = await userApi.me();
         if (!me) return;
-        setNickname(me.nickname ?? '');
-        setGender(normalizeGenderForState(me.gender) ?? 'other');
-        setBirthYear(me.birthYear ? sanitizeBirthYearInput(String(me.birthYear)) : '');
+        populateProfile(me);
         await setTokens({ user: me });
       } catch {}
     })();
-  }, [setTokens]);
+  }, [populateProfile, setTokens]);
 
   const validateProfile = () => {
     const nicknameError = validateNickname(nickname);
@@ -124,10 +157,9 @@ export default function ProfileEditScreen() {
         birthYear: Number(sanitizeBirthYearInput(birthYear)),
       });
       if (updated) {
-        setNickname(updated.nickname ?? nickname.trim());
-        setGender(normalizeGenderForState(updated.gender) ?? gender);
-        setBirthYear(updated.birthYear ? sanitizeBirthYearInput(String(updated.birthYear)) : sanitizeBirthYearInput(String(birthYear)));
-        await setTokens({ user: updated });
+        const mergedUser = { ...(user ?? {}), ...updated };
+        populateProfile(mergedUser);
+        await setTokens({ user: mergedUser });
       }
 
       // 2) 비밀번호 변경(선택)
