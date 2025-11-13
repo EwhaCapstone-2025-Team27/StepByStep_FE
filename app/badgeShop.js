@@ -15,22 +15,9 @@ import {
   View,
 } from 'react-native';
 import { badgeApi, pointsApi } from '../lib/apiClient';
+import { toPointString } from '../lib/pointsUtils';
 
 const BADGE_PAGE_SIZE = 20;
-const HISTORY_PAGE_SIZE = 20;
-
-const formatDateTime = (value) => {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mi = String(date.getMinutes()).padStart(2, '0');
-  return `${yyyy}.${mm}.${dd} ${hh}:${mi}`;
-};
-
 const normalizeBadgeList = (list) => {
   if (!Array.isArray(list)) return [];
   return list
@@ -55,30 +42,6 @@ const normalizeBadgeList = (list) => {
       });
 };
 
-const normalizeHistories = (list) => {
-  if (!Array.isArray(list)) return [];
-  return list.filter(Boolean).map((item, idx) => ({
-    id: item?.id ?? item?.historyId ?? item?.logId ?? `history-${idx}`,
-    type: item?.type === 'EARN' ? 'EARN' : item?.type === 'SPEND' ? 'SPEND' : (item?.pointChange ?? 0) >= 0 ? 'EARN' : 'SPEND',
-    title: item?.title ?? item?.reason ?? item?.description ?? '포인트 내역',
-    pointChange: Number(item?.pointChange ?? item?.points ?? item?.point ?? 0),
-    balanceAfter: Number(item?.balanceAfter ?? item?.balance ?? item?.remain ?? 0),
-    createdAt: item?.createdAt ?? item?.created_at ?? item?.timestamp ?? null,
-  }));
-};
-
-const toPointString = (value) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num.toLocaleString() : '0';
-};
-
-const toChangeString = (value) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return '0';
-  const prefix = num > 0 ? '+' : '';
-  return `${prefix}${num.toLocaleString()} P`;
-};
-
 export default function BadgeShopScreen() {
   const params = useLocalSearchParams();
   const initialPointParam = params?.points;
@@ -98,13 +61,7 @@ export default function BadgeShopScreen() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [selected, setSelected] = useState(null);
 
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [histories, setHistories] = useState([]);
-  const [historyCursor, setHistoryCursor] = useState(null);
-  const [historyHasNext, setHistoryHasNext] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyRefreshing, setHistoryRefreshing] = useState(false);
-  const [historyMeta, setHistoryMeta] = useState({ nickname: '', currentPoints: null, updatedAt: null });
+  const [pointSummary, setPointSummary] = useState({ nickname: '', currentPoints: null, updatedAt: null });
 
   const badgeCursorRef = useRef(null);
 
@@ -133,7 +90,7 @@ export default function BadgeShopScreen() {
       if (hasNumeric) {
         setMyPoints(numeric);
       }
-      setHistoryMeta((prev) => ({
+      setPointSummary((prev) => ({
         nickname: res?.nickname ?? prev.nickname ?? '',
         currentPoints: hasNumeric ? numeric : prev.currentPoints,
         updatedAt: res?.updatedAt ?? prev.updatedAt ?? null,
@@ -190,64 +147,6 @@ export default function BadgeShopScreen() {
     }
   }, []);
 
-  const historyLoadingRef = useRef(false);
-  const loadHistories = useCallback(
-      async ({ append = false, cursor: cursorOverride } = {}) => {
-        if (historyLoadingRef.current) return;
-        historyLoadingRef.current = true;
-        if (append) {
-          setHistoryLoading(true);
-        } else {
-          setHistoryRefreshing(true);
-        }
-        try {
-          const cursorToUse = append ? (cursorOverride ?? historyCursor) : cursorOverride ?? undefined;
-          if (!append) {
-            setHistoryCursor(null);
-            setHistoryHasNext(false);
-          }
-          const res = await pointsApi.histories({ limit: HISTORY_PAGE_SIZE, cursor: cursorToUse });
-          const list = normalizeHistories(res?.histories ?? res?.data?.histories ?? []);
-          setHistories((prev) => {
-            const base = append ? [...prev] : [];
-            const indexMap = new Map(base.map((item, index) => [String(item.id), index]));
-            list.forEach((item) => {
-              const key = String(item.id);
-              if (indexMap.has(key)) {
-                const idx = indexMap.get(key);
-                base[idx] = { ...base[idx], ...item };
-              } else {
-                indexMap.set(key, base.length);
-                base.push(item);
-              }
-            });
-            return base;
-          });
-          setHistoryMeta((prev) => {
-            const numeric = Number(
-                res?.currentPoints ?? res?.myPoint ?? res?.points ?? res?.balance ?? prev.currentPoints ?? myPoints
-            );
-            return {
-              nickname: res?.nickname ?? prev.nickname ?? '',
-              currentPoints: Number.isFinite(numeric) ? numeric : prev.currentPoints ?? myPoints,
-              updatedAt: res?.updatedAt ?? prev.updatedAt,
-            };
-          });
-          setHistoryCursor(res?.paging?.nextCursor ?? res?.data?.paging?.nextCursor ?? null);
-          setHistoryHasNext(Boolean(res?.paging?.hasNext ?? res?.data?.paging?.hasNext));
-        } catch (err) {
-          if (err?.status !== 401) {
-            Alert.alert('포인트 내역 조회 실패', err?.message || '포인트 내역을 불러오지 못했어요.');
-          }
-        } finally {
-          historyLoadingRef.current = false;
-          setHistoryLoading(false);
-          setHistoryRefreshing(false);
-        }
-      },
-      [historyCursor, myPoints]
-  );
-
   useEffect(() => {
     loadPoints();
     loadBadges({ append: false });
@@ -276,6 +175,15 @@ export default function BadgeShopScreen() {
     setSelected(badge);
     setConfirmOpen(true);
   };
+
+  const openPointsHistory = useCallback(() => {
+    const paramsToSend = {};
+    if (pointSummary.nickname) paramsToSend.nickname = pointSummary.nickname;
+    const pointsParam = pointSummary.currentPoints ?? myPoints;
+    if (pointsParam != null) paramsToSend.points = String(pointsParam);
+    if (pointSummary.updatedAt) paramsToSend.updatedAt = pointSummary.updatedAt;
+    router.push({ pathname: '/pointsHistory', params: paramsToSend });
+  }, [myPoints, pointSummary]);
 
   const onConfirmBuy = useCallback(async () => {
     if (!selected) return;
@@ -311,7 +219,7 @@ export default function BadgeShopScreen() {
       const afterPoint = Number(pointsInfo?.after ?? pointsInfo?.current ?? pointsInfo?.balance ?? pointsInfo?.point);
       if (Number.isFinite(afterPoint)) {
         setMyPoints(afterPoint);
-        setHistoryMeta((prev) => ({
+        setPointSummary((prev) => ({
           ...prev,
           currentPoints: afterPoint,
           updatedAt: pointsInfo?.updatedAt ?? res?.updatedAt ?? new Date().toISOString(),
@@ -390,17 +298,6 @@ export default function BadgeShopScreen() {
     );
   };
 
-  const openHistoryModal = () => {
-    setHistoryOpen(true);
-    if (!histories.length) {
-      loadHistories({ append: false });
-    }
-  };
-
-  const closeHistoryModal = () => {
-    setHistoryOpen(false);
-  };
-
   const headerComponent = (
       <View style={styles.headerWrap}>
         <View style={styles.headerRow}>
@@ -409,7 +306,7 @@ export default function BadgeShopScreen() {
           </TouchableOpacity>
           <Text style={styles.headerTitle}>배지 상점</Text>
           <TouchableOpacity
-              onPress={openHistoryModal}
+              onPress={openPointsHistory}
               style={styles.historyBtn}
               activeOpacity={0.85}
           >
@@ -440,15 +337,6 @@ export default function BadgeShopScreen() {
             <ActivityIndicator color="#111827" />
         ) : (
             <Text style={styles.emptyText}>표시할 배지가 없어요.</Text>
-        )}
-      </View>
-  );
-
-  const historyFooter = (
-      <View style={{ paddingVertical: 16 }}>
-        {historyLoading && <ActivityIndicator color="#111827" />}
-        {!historyHasNext && !historyLoading && histories.length > 0 && (
-            <Text style={styles.listEndText}>모든 내역을 확인했어요</Text>
         )}
       </View>
   );
@@ -498,66 +386,6 @@ export default function BadgeShopScreen() {
               </View>
             </View>
           </View>
-        </Modal>
-
-        <Modal visible={historyOpen} animationType="slide" onRequestClose={closeHistoryModal}>
-          <SafeAreaView style={styles.historySafe}>
-            <View style={styles.historyHeader}>
-              <Text style={styles.historyTitle}>내 포인트 내역</Text>
-              <TouchableOpacity onPress={closeHistoryModal} style={styles.historyCloseBtn}>
-                <Text style={styles.historyCloseText}>닫기</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.historySummary}>
-              <Text style={styles.historyNickname}>{historyMeta.nickname || '사용자'}</Text>
-              <Text style={styles.historyPoints}>{toPointString(historyMeta.currentPoints ?? myPoints)} P</Text>
-              <Text style={styles.historyUpdatedAt}>
-                최근 업데이트: {historyMeta.updatedAt ? formatDateTime(historyMeta.updatedAt) : '-'}
-              </Text>
-            </View>
-
-            <FlatList
-                data={histories}
-                keyExtractor={(item) => String(item.id)}
-                renderItem={({ item }) => (
-                    <View style={styles.historyItem}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.historyItemTitle} numberOfLines={1}>{item.title}</Text>
-                        <Text style={styles.historyItemDate}>{formatDateTime(item.createdAt)}</Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={[styles.historyItemChange, item.type === 'EARN' ? styles.historyEarn : styles.historySpend]}>
-                          {toChangeString(item.pointChange)}
-                        </Text>
-                        <Text style={styles.historyItemBalance}>{toPointString(item.balanceAfter)} P</Text>
-                      </View>
-                    </View>
-                )}
-                refreshControl={
-                  <RefreshControl
-                      refreshing={historyRefreshing}
-                      onRefresh={() => loadHistories({ append: false })}
-                  />
-                }
-                ListEmptyComponent={
-                  <View style={styles.emptyState}>
-                    {historyRefreshing || historyLoading ? (
-                        <ActivityIndicator color="#111827" />
-                    ) : (
-                        <Text style={styles.emptyText}>포인트 내역이 아직 없어요.</Text>
-                    )}
-                  </View>
-                }
-                ListFooterComponent={histories.length ? historyFooter : null}
-                onEndReachedThreshold={0.2}
-                onEndReached={() => {
-                  if (!historyHasNext || historyLoadingRef.current || historyLoading) return;
-                  loadHistories({ append: true });
-                }}
-                contentContainerStyle={{ paddingBottom: 24 }}
-            />
-          </SafeAreaView>
         </Modal>
       </SafeAreaView>
   );
@@ -680,46 +508,4 @@ const styles = StyleSheet.create({
   modalCancel: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
   modalBuy: { backgroundColor: '#111827' },
   modalBtnText: { fontWeight: '700', color: '#111827' },
-  historySafe: { flex: 1, backgroundColor: '#ffffff' },
-  historyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  historyTitle: { flex: 1, fontSize: 18, fontWeight: '800', color: '#111827' },
-  historyCloseBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#f3f4f6',
-  },
-  historyCloseText: { color: '#111827', fontWeight: '700' },
-  historySummary: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-  },
-  historyNickname: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  historyPoints: { fontSize: 20, fontWeight: '800', color: '#111827' },
-  historyUpdatedAt: { fontSize: 12, color: '#6b7280' },
-  historyItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    gap: 16,
-  },
-  historyItemTitle: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  historyItemDate: { fontSize: 12, color: '#6b7280', marginTop: 4 },
-  historyItemChange: { fontSize: 14, fontWeight: '700' },
-  historyEarn: { color: '#047857' },
-  historySpend: { color: '#dc2626' },
-  historyItemBalance: { fontSize: 12, color: '#4b5563', marginTop: 4 },
 });

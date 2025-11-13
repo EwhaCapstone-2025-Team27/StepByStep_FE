@@ -1,7 +1,7 @@
 // app/scenario.js
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ActivityIndicator, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { aiApi } from '../lib/apiClient';
 
 const DEFAULT_KEYWORDS = ['피임','생리','연애','신체 변화','젠더'];
