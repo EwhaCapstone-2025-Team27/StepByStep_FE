@@ -88,6 +88,7 @@ export default function HomeScreen() {
     let points = fallbackPoints;
     if (pointsRes.status === 'fulfilled') {
       const v =
+          pointsRes.value?.myPoint ??
           pointsRes.value?.points ??
           pointsRes.value?.point ??
           pointsRes.value?.balance ??
@@ -104,8 +105,16 @@ export default function HomeScreen() {
     }
 
     let badges = fallbackBadges;
-    if (badgesRes.status === 'fulfilled' && Array.isArray(badgesRes.value)) {
-      const owned = normalizeBadges(badgesRes.value).filter((b) => b.owned);
+    if (badgesRes.status === 'fulfilled') {
+      const list =
+          Array.isArray(badgesRes.value)
+              ? badgesRes.value
+              : Array.isArray(badgesRes.value?.badges)
+                  ? badgesRes.value.badges
+                  : Array.isArray(badgesRes.value?.data?.badges)
+                      ? badgesRes.value.data.badges
+                      : [];
+      const owned = normalizeBadges(list).filter((b) => b.owned);
       if (owned.length) badges = owned;
     }
 

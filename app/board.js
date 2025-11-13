@@ -47,7 +47,7 @@ export default function BoardScreen() {
   const [search, setSearch] = useState('');
   const [composeOpen, setComposeOpen] = useState(false);
   const [content, setContent] = useState('');
-  const [nick, setNick] = useState('');
+  const [myNickname, setMyNickname] = useState('');
   const [myId, setMyId] = useState(null);
   const [myPosts, setMyPosts] = useState([]);
 
@@ -100,6 +100,17 @@ export default function BoardScreen() {
     })();
   }, []);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const storedNick = await AsyncStorage.getItem('user_nickname');
+        setMyNickname(storedNick || '');
+      } catch (e) {
+        console.warn('Failed to load nickname', e);
+      }
+    })();
+  }, []);
+
   // 저장
   const persist = async (next) => {
     setPosts(next);
@@ -112,7 +123,7 @@ export default function BoardScreen() {
 
   const onCreate = async () => {
     const body = content.trim();
-    const nickname = (nick || '익명').trim();
+    const nickname = (myNickname || '익명').trim();
     if (!body) {
       Alert.alert('내용을 입력해주세요');
       return;
@@ -305,14 +316,6 @@ export default function BoardScreen() {
 
             <View style={styles.modalBody}>
               <TextInput
-                  value={nick}
-                  onChangeText={setNick}
-                  placeholder="닉네임 (미입력 시 익명)"
-                  placeholderTextColor="#9ca3af"
-                  style={styles.nick}
-                  maxLength={20}
-              />
-              <TextInput
                   value={content}
                   onChangeText={setContent}
                   placeholder="내용을 입력하세요 (욕설/개인정보 금지)"
@@ -420,15 +423,6 @@ const styles = StyleSheet.create({
   cancel: { color: '#6b7280', fontWeight: '700' },
   modalTitle: { fontSize: 18, fontWeight: '800' },
   modalBody: { padding: 16, gap: 10 },
-  nick: {
-    height: 44,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff',
-    color: '#111827',
-  },
   textarea: {
     minHeight: 160,
     borderWidth: 1,
