@@ -115,7 +115,6 @@ const extractList = (payload) => {
 };
 
 export default function BoardScreen() {
-  console.log('auth.user in BoardScreen >>>', auth?.user);
   const auth = useAuth?.();
   const userNickname = auth?.user?.nickname;
   const rawUser = auth?.user;
