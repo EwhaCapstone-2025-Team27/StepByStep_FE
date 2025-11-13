@@ -80,6 +80,7 @@ const resolveNickname = (raw) => {
       pickString(raw?.userNickname) ||
       pickString(raw?.authorNickname) ||
       pickString(raw?.writerNickname) ||
+      pickString(raw?.author_nickname) ||
       pickString(raw?.createdByNickname) ||
       fromNested(raw?.user) ||
       fromNested(raw?.author) ||
@@ -105,7 +106,7 @@ const normalizePost = (raw) => {
     commentsNum: comments,
     likesNum: likes,
     liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
-    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
+    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? null,
     isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
   };
 };
@@ -117,8 +118,14 @@ const normalizeComment = (raw) => {
     nickname: resolveNickname(raw),
     content: raw.content ?? raw.comments ?? raw.body ?? '',
     createdAt:
-        raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
-    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
+        raw.createdAt ??
+        raw.created_at ??
+        raw.createDate ??
+        raw.createdDate ??
+        raw.created ??
+        new Date().toISOString(),
+    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? null,
+    postId: raw.postId ?? raw.boardId ?? raw.board_id ?? raw.post_id ?? null,
     isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
   };
 };
@@ -206,7 +213,9 @@ export default function PostDetailScreen() {
           ? payload.data
           : Array.isArray(payload?.comments)
               ? payload.comments
-              : [];
+              : Array.isArray(payload?.board_comments)
+                  ? payload.board_comments
+                  : [];
       const normalizedComments = commentSource
           .map((item) => normalizeComment(item))
           .filter(Boolean);
@@ -266,7 +275,7 @@ export default function PostDetailScreen() {
     const content = editText.trim();
     if (!content) return;
     try {
-      const updated = await commentApi.update(editTarget.id, { content });
+      const updated = await commentApi.update(postId, editTarget.id, { content });
       const normalized = normalizeComment(updated);
       setComments((prev) => prev.map((c) => (c.id === editTarget.id ? normalized : c)));
       setEditOpen(false);
@@ -274,7 +283,7 @@ export default function PostDetailScreen() {
     } catch (e) {
       Alert.alert('수정 실패', e?.message || '댓글을 수정하지 못했습니다.');
     }
-  }, [editTarget, editText, scrollToBottom]);
+  }, [editTarget, editText, postId, scrollToBottom]);
 
   const onDeleteComment = useCallback((comment) => {
     if (!comment) return;
@@ -285,7 +294,7 @@ export default function PostDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await commentApi.delete(comment.id);
+            await commentApi.delete(postId, comment.id);
             setComments((prev) => prev.filter((c) => c.id !== comment.id));
             setPost((prev) =>
                 prev
@@ -298,7 +307,7 @@ export default function PostDetailScreen() {
         },
       },
     ]);
-  }, []);
+  }, [postId]);
 
   const isMinePost = post && isMineByIdsOrNick(post, meId, meNickname);
 
@@ -385,24 +394,25 @@ export default function PostDetailScreen() {
 
   const renderComment = useCallback(
       ({ item }) => {
-        const mine = isMineByIdsOrNick(item, meId, meNickname);
+        const mine =
+            typeof item?.isMine === 'boolean' ? item.isMine : isMineByIdsOrNick(item, meId, meNickname);
         return (
             <View style={S.cmtCard}>
               <View style={S.cmtHead}>
-                <Text style={S.cmtNick}>{item.nickname || '익명'}</Text>
+                <Text style={S.cmtNick}>{item.nickname}</Text>
                 <Text style={S.cmtDate}>{formatKST(item.createdAt)}</Text>
               </View>
               <Text style={S.cmtBody}>{item.content}</Text>
               <View style={S.cmtActions}>
                 {mine && (
-                    <>
+                    <View style={S.cmtActions}>
                       <Pressable style={S.pill} onPress={() => openEdit(item)}>
                         <Text style={S.pillText}>수정</Text>
                       </Pressable>
                       <Pressable style={[S.pill, S.danger]} onPress={() => onDeleteComment(item)}>
                         <Text style={[S.pillText, { color: '#b91c1c' }]}>삭제</Text>
                       </Pressable>
-                    </>
+                    </View>
                 )}
               </View>
             </View>

@@ -37,8 +37,6 @@ const formatKST = (iso) => {
 };
 
 const STORAGE_KEY = 'board_posts_v1'; // 로컬 저장 키
-const USER_KEY = 'board_user_id_v1';
-const MY_POSTS_KEY = 'board_my_posts_v1';
 
 /** ==== Palette & tokens (ChatScreen과 톤 맞춤) ==== */
 const BG = '#F7F7FA';
@@ -76,11 +74,7 @@ const normalizePost = (raw) => {
   const nickname =
       raw.author_nickname ??
       raw.nickname ??
-      raw.writer ??
-      raw.author ??
       raw.userNickname ??
-      raw.authorNickname ??
-      raw.writerNickname ??
       '익명';
   const createdAt =
       raw.created_at ?? raw.createdAt ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString();
@@ -121,39 +115,28 @@ const extractList = (payload) => {
 };
 
 export default function BoardScreen() {
+  console.log('auth.user in BoardScreen >>>', auth?.user);
   const auth = useAuth?.();
   const userNickname = auth?.user?.nickname;
+  const rawUser = auth?.user;
+  const userId =
+      rawUser?.id ??
+      rawUser?.userId ??
+      null;
   const insets = useSafeAreaInsets();
   const [posts, setPosts] = useState([]);
   const [search, setSearch] = useState('');
   const [composeOpen, setComposeOpen] = useState(false);
   const [content, setContent] = useState('');
   const [myNickname, setMyNickname] = useState(() => userNickname || '');
-  const [myId, setMyId] = useState(null);
-  const [myPosts, setMyPosts] = useState([]);
+  const [myId, setMyId] = useState(() =>
+      userId != null ? String(userId) : null
+  );
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [editContent, setEditContent] = useState('');
-
-  const myPostSet = useMemo(() => new Set(myPosts), [myPosts]);
-
-  const ensureUserId = useCallback(async () => {
-    if (myId) return myId;
-    try {
-      let stored = await AsyncStorage.getItem(USER_KEY);
-      if (!stored) {
-        stored = `local_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-        await AsyncStorage.setItem(USER_KEY, stored);
-      }
-      setMyId(stored);
-      return stored;
-    } catch (e) {
-      console.warn('Failed to prepare board user id', e);
-      return null;
-    }
-  }, [myId]);
 
   // 최초 로드
   useEffect(() => {
@@ -168,23 +151,10 @@ export default function BoardScreen() {
   }, []);
 
   useEffect(() => {
-    ensureUserId();
-  }, [ensureUserId]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(MY_POSTS_KEY);
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setMyPosts(parsed.filter((id) => typeof id === 'string'));
-        }
-      } catch (e) {
-        console.warn('Failed to load my posts', e);
-      }
-    })();
-  }, []);
+    if (userId != null) {
+      setMyId(String(userId));
+    }
+  }, [userId]);
 
   useEffect(() => {
     (async () => {
@@ -264,34 +234,22 @@ export default function BoardScreen() {
       Alert.alert('내용을 입력해주세요');
       return;
     }
-    const authorId = (await ensureUserId()) || myId;
 
     try {
       const payload = { content: body };
       if (nickname) payload.nickname = nickname;
       const created = await boardApi.createPost(payload);
-      const normalized = normalizePost(created?.data ?? created) ?? {
-        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        content: body,
-        nickname: nickname || '익명',
-        createdAt: nowISO(),
-        likesNum: 0,
-        commentsNum: 0,
-        ...(authorId ? { authorId } : {}),
-      };
+      const normalized =
+          normalizePost(created?.data ?? created) ?? {
+            id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            content: body,
+            nickname: nickname || '익명',
+            createdAt: nowISO(),
+            likesNum: 0,
+            commentsNum: 0,
+          };
 
       await persist((prev) => [normalized, ...(prev || [])]);
-      const newId = normalized.id ? String(normalized.id) : null;
-      if (newId) {
-        setMyPosts((prev) => {
-          if (prev.includes(newId)) return prev;
-          const next = [...prev, newId];
-          AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch((e) =>
-              console.warn('Failed to save my posts', e)
-          );
-          return next;
-        });
-      }
       setContent('');
       setComposeOpen(false);
     } catch (e) {
@@ -316,10 +274,7 @@ export default function BoardScreen() {
 
   const onDelete = async (id) => {
     const target = posts.find((p) => p.id === id);
-    const mineFromServer = target?.isMine;
-    const mineFromAuthor = target?.authorId && myId ? target.authorId === myId : false;
-    const mineFromLocal = myPostSet.has(id);
-    const isMine = mineFromServer !== undefined ? !!mineFromServer : mineFromAuthor || mineFromLocal;
+    const isMine = isPostMine(target);
 
     if (!isMine) {
       Alert.alert('삭제', '본인이 작성한 글만 삭제할 수 있어요.');
@@ -355,14 +310,6 @@ export default function BoardScreen() {
             const base = Array.isArray(prev) ? prev : [];
             return base.filter((p) => p.id !== id);
           });
-          setMyPosts((prev) => {
-            if (!prev.includes(id)) return prev;
-            const updated = prev.filter((pid) => pid !== id);
-            AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(updated)).catch((e) =>
-                console.warn('Failed to save my posts', e)
-            );
-            return updated;
-          });
         },
       },
     ]);
@@ -372,10 +319,15 @@ export default function BoardScreen() {
       (post) => {
         if (!post) return false;
         if (post?.isMine !== undefined) return !!post.isMine;
-        if (post?.authorId && myId) return post.authorId === myId;
-        return myPostSet.has(post?.id);
+        if (post.authorId && myId) {
+          return String(post.authorId) === String(myId);
+        }
+        if (myNickname && post.nickname) {
+          if (post.nickname === myNickname) return true;
+        }
+        return false;
       },
-      [myId, myPostSet]
+      [myId, myNickname]
   );
 
   const closeEdit = useCallback(() => {
@@ -483,7 +435,6 @@ export default function BoardScreen() {
             </Pressable>
 
             <View style={{ flex: 1 }} />
-
             {isMine && (
                 <>
                   <Pressable
