@@ -28,8 +28,8 @@ export default function KeywordScenarioScreen() {
           }));
           setBubbles(mapped);
         }
-      } catch (e) {
-      
+      } catch {
+        // 무시하고 폴백 데이터를 사용합니다.
       }
     })();
   }, []);
