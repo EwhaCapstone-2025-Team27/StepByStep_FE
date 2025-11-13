@@ -472,14 +472,13 @@ export default function PostDetailScreen() {
                               <Text
                                   style={[
                                     S.meta,
-                                    { fontWeight: '700', color: post.liked ? '#ec4899' : '#6b7280' },
+                                    { fontSize: '14', color: post.liked ? '#ec4899' : '#6b7280' },
                                   ]}
                               >
                                 {post.liked ? '💖' : '❤️'} {toNumber(post.likesNum)}
                               </Text>
                             </Pressable>
-                            <Text style={S.meta}>·</Text>
-                            <Text style={S.meta}>💬 {post.commentsNum ?? orderedComments.length}</Text>
+                            <Text style={[S.pill, {paddingHorizontal: 8, paddingVertical: 4}]}>💬 {post.commentsNum ?? orderedComments.length}</Text>
                             <View style={{ flex: 1 }} />
                             {isMinePost && (
                                 <>

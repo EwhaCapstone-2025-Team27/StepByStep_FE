@@ -400,6 +400,7 @@ export default function BoardScreen() {
     const commentCount = toNumber(item.commentsNum ?? item.commentCount ?? item.comments);
 
     return (
+        // 댓글 수, 좋아요 수만 보이게(클릭 X, pillText X)
         <TouchableOpacity
             activeOpacity={0.9}
             onPress={() =>
@@ -418,20 +419,21 @@ export default function BoardScreen() {
           <Text style={styles.cardBody}>{item.content}</Text>
 
           <View style={styles.cardActions}>
-            <View style={styles.pill}>
-              <Text style={styles.pillText}>💬 {commentCount}</Text>
-            </View>
 
             <Pressable
-                style={styles.pill}
+                style={styles.meta}
                 onPress={(e) => {
                   e.stopPropagation();
-                  onLike(item.id);
+                  //onLike(item.id);
                 }}
                 hitSlop={6}
             >
-              <Text style={styles.pillText}>❤️ {likeCount}</Text>
+              <Text style={styles.meta}>❤️ {likeCount}</Text>
             </Pressable>
+
+            <View style={styles.meta}>
+              <Text style={styles.meta}>💬 {commentCount}</Text>
+            </View>
 
             <View style={{ flex: 1 }} />
             {isMine && (
