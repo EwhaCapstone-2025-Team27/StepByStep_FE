@@ -24,19 +24,21 @@ const CARD = '#FFFFFF';
 const BORDER = '#E6E7EC';
 const TEXT_MAIN = '#0E0F12';
 const TEXT_SUB = '#5E6472';
+const MY_POSTS_KEY = 'board_my_posts_v1';
 
-const formatKST = (iso) => {
-  try {
-    const d = new Date(iso);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const hh = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
-    return `${mm}/${dd} ${hh}:${min}`;
-  } catch {
-    return iso;
-  }
-};
+// const formatKST = (iso) => {
+//   try {
+//     const d = new Date(iso);
+//     const yyyy = d.getFullYear();
+//     const mm = String(d.getMonth() + 1).padStart(2, '0');
+//     const dd = String(d.getDate()).padStart(2, '0');
+//     const hh = String(d.getHours()).padStart(2, '0');
+//     const min = String(d.getMinutes()).padStart(2, '0');
+//     return `${yyyy}/${mm}/${dd} ${hh}:${min}`;
+//   } catch {
+//     return iso;
+//   }
+// };
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -53,36 +55,64 @@ const parseLiked = (value) => {
   return false;
 };
 
+const likedStoreKey = (userId, nickname) => {
+  const base = userId ?? (nickname ? nickname : null);
+  return base ? `liked_posts_${base}` : 'liked_posts';
+};
+
 const normalizePost = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   const likes = toNumber(raw.likesNum ?? raw.likeNum ?? raw.likes ?? raw.likeCount);
   const comments = toNumber(
       raw.commentsNum ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
   );
+  const mineRaw =
+      raw.isMine ??
+      raw.mine ??
+      raw.owned ??
+      raw.isOwned ??
+      raw.owner ??
+      raw.mineYn ??
+      raw.mineYN ??
+      raw.isAuthor ??
+      raw.isWriter ??
+      undefined;
+
   return {
     id: raw.id ?? raw.postId ?? raw.postID ?? raw.post_id ?? raw.uuid ?? raw._id,
-    nickname: raw.nickname ?? raw.writer ?? raw.author ?? '익명',
+    nickname: raw.nickname ?? raw.writer ?? raw.author,
     createdAt:
-        raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
+        raw.created_at ?? new Date().toISOString(),
     content: raw.content ?? raw.body ?? '',
     commentsNum: comments,
     likesNum: likes,
     liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
-    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
-    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? raw.writerId ?? raw.author?.id ?? null,
+    isMine: mineRaw !== undefined ? parseLiked(mineRaw) : undefined,
   };
 };
 
 const normalizeComment = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
+  const mineRaw =
+      raw.isMine ??
+      raw.mine ??
+      raw.isOwned ??
+      raw.owned ??
+      raw.owner ??
+      raw.mineYn ??
+      raw.mineYN ??
+      raw.isAuthor ??
+      raw.isWriter ??
+      undefined;
   return {
     id: raw.id ?? raw.commentId ?? raw.commentID ?? raw.uuid ?? raw._id,
     nickname: raw.nickname ?? raw.writer ?? raw.author ?? '익명',
     content: raw.content ?? raw.comments ?? raw.body ?? '',
     createdAt:
         raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
-    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
-    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? raw.writerId ?? raw.author?.id ?? null,
+    isMine: mineRaw !== undefined ? parseLiked(mineRaw) : undefined,
   };
 };
 
@@ -100,15 +130,24 @@ export default function PostDetailScreen() {
   const { user } = (useAuth?.() || {});
   const [meId, setMeId] = useState(null);
   const [meNickname, setMeNickname] = useState(null);
+  const [myPostIds, setMyPostIds] = useState([]);
 
   useEffect(() => {
-    if (user?.userId || user?.id) {
-      setMeId(String(user.userId ?? user.id));
-    }
-    if (user?.nickname) {
-      setMeNickname(user.nickname);
-      AsyncStorage.setItem('user_nickname', user.nickname).catch(() => {});
-    }
+    if (!user) return;
+    try {
+      const rawId = user.userId ?? user.id ?? user.user_id;
+      if (rawId != null) {
+        const strId = String(rawId);
+        setMeId(strId);
+        AsyncStorage.setItem('user_id', strId).catch(() => {});
+      }
+      const nick = user.nickname ?? user.profile?.nickname ?? user.name;
+      if (nick) {
+        setMeNickname(nick);
+        AsyncStorage.setItem('user_nickname', nick).catch(() => {});
+      }
+      AsyncStorage.setItem('user', JSON.stringify(user)).catch(() => {});
+    } catch {}
   }, [user]);
 
   useEffect(() => {
@@ -120,9 +159,17 @@ export default function PostDetailScreen() {
           const parsed = JSON.parse(storedUser);
           if (!meId) {
             const fallbackId = parsed?.userId ?? parsed?.id ?? parsed?.user_id;
-            if (fallbackId) setMeId(String(fallbackId));
+            if (fallbackId != null) setMeId(String(fallbackId));
           }
-          if (!meNickname && parsed?.nickname) setMeNickname(parsed.nickname);
+          if (!meNickname) {
+            const fallbackNick =
+                parsed?.nickname ?? parsed?.profile?.nickname ?? parsed?.name;
+            if (fallbackNick) setMeNickname(fallbackNick);
+          }
+        }
+        if (!meId) {
+          const storedId = await AsyncStorage.getItem('user_id');
+          if (storedId) setMeId(storedId);
         }
         if (!meNickname) {
           const storedNick = await AsyncStorage.getItem('user_nickname');
@@ -132,12 +179,52 @@ export default function PostDetailScreen() {
     })();
   }, [meId, meNickname]);
 
+  useEffect(() => {
+    myPostIdsRef.current = new Set((myPostIds || []).map((id) => String(id)));
+  }, [myPostIds]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem(MY_POSTS_KEY);
+        if (!stored) return;
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setMyPostIds(parsed.map((id) => String(id)));
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const markOwnedPost = useCallback((id) => {
+    if (!id) return;
+    const stringId = String(id);
+    setMyPostIds((prev) => {
+      if (prev.includes(stringId)) return prev;
+      const next = [...prev, stringId];
+      AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const unmarkOwnedPost = useCallback((id) => {
+    if (!id) return;
+    const stringId = String(id);
+    setMyPostIds((prev) => {
+      if (!prev.includes(stringId)) return prev;
+      const next = prev.filter((pid) => pid !== stringId);
+      AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
   const insets = useSafeAreaInsets();
 
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [likeBusy, setLikeBusy] = useState(false);
+  const [likedCache, setLikedCache] = useState({});
 
   const [myComment, setMyComment] = useState('');
 
@@ -149,6 +236,77 @@ export default function PostDetailScreen() {
   const [postEditText, setPostEditText] = useState('');
 
   const listRef = useRef(null);
+  const likedCacheRef = useRef({});
+  const mountedRef = useRef(true);
+  const likedKey = useMemo(() => likedStoreKey(meId, meNickname), [meId, meNickname]);
+  const myPostIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    likedCacheRef.current = likedCache || {};
+  }, [likedCache]);
+
+  const loadLikedCache = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(likedKey);
+      if (!mountedRef.current) return;
+      if (!raw) {
+        setLikedCache({});
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const normalized = Object.entries(parsed).reduce((acc, [k, v]) => {
+          acc[String(k)] = !!v;
+          return acc;
+        }, {});
+        setLikedCache(normalized);
+      } else {
+        setLikedCache({});
+      }
+    } catch {
+      if (mountedRef.current) setLikedCache({});
+    }
+  }, [likedKey]);
+
+  useEffect(() => {
+    loadLikedCache();
+  }, [loadLikedCache]);
+
+  useEffect(() => {
+    if (!postId) return;
+    const stored = likedCache?.[String(postId)];
+    if (stored === undefined) return;
+    setPost((prev) => {
+      if (!prev) return prev;
+      const liked = !!stored;
+      if (prev.liked === liked) return prev;
+      return { ...prev, liked };
+    });
+  }, [likedCache, postId]);
+
+  const persistLiked = useCallback(
+      async (nextLiked) => {
+        if (!postId) return;
+        const stringId = String(postId);
+        const nextMap = { ...(likedCacheRef.current || {}) };
+        nextMap[stringId] = !!nextLiked;
+        if (mountedRef.current) {
+          setLikedCache(nextMap);
+        }
+        try {
+          await AsyncStorage.setItem(likedKey, JSON.stringify(nextMap));
+        } catch {}
+      },
+      [likedKey, postId]
+  );
+
   const scrollToBottom = useCallback(
       () => requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true })),
       []
@@ -174,7 +332,21 @@ export default function PostDetailScreen() {
           .map((item) => normalizeComment(item))
           .filter(Boolean);
 
-      setPost(normalizedPost);
+      if (normalizedPost) {
+        const stringId = String(normalizedPost.id);
+        const mineLocal = myPostIdsRef.current.has(stringId);
+        const mineProfile = isMineByIdsOrNick(normalizedPost, meId, meNickname);
+        const mineFromServer = normalizedPost.isMine;
+        const isMine = mineFromServer || mineLocal || mineProfile;
+        if (isMine) {
+          markOwnedPost(stringId);
+          setPost({ ...normalizedPost, isMine: true });
+        } else {
+          setPost(normalizedPost);
+        }
+      } else {
+        setPost(normalizedPost);
+      }
       setComments(normalizedComments);
     } catch (e) {
       if (e?.status === 404) {
@@ -188,7 +360,7 @@ export default function PostDetailScreen() {
       setLoading(false);
       scrollToBottom();
     }
-  }, [postId, scrollToBottom]);
+  }, [markOwnedPost, meId, meNickname, postId, scrollToBottom]);
 
   useEffect(() => {
     if (postId) load();
@@ -263,7 +435,40 @@ export default function PostDetailScreen() {
     ]);
   }, []);
 
-  const isMinePost = post && isMineByIdsOrNick(post, meId, meNickname);
+  useEffect(() => {
+    setPost((prev) => {
+      if (!prev) return prev;
+      const shouldBeMine =
+          prev.isMine ||
+          myPostIdsRef.current.has(String(prev.id)) ||
+          isMineByIdsOrNick(prev, meId, meNickname);
+      if (shouldBeMine && !prev.isMine) {
+        return { ...prev, isMine: true };
+      }
+      return prev;
+    });
+  }, [meId, meNickname, myPostIds]);
+
+  useEffect(() => {
+    if (!post?.isMine) return;
+    const id = post.id;
+    if (id == null) return;
+    const stringId = String(id);
+    if (myPostIdsRef.current.has(stringId)) return;
+    setMyPostIds((prev) => {
+      if (prev.includes(stringId)) return prev;
+      const next = [...prev, stringId];
+      AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, [post]);
+
+  const isMinePost = Boolean(
+      post &&
+      (post.isMine ||
+          myPostIdsRef.current.has(String(post.id)) ||
+          isMineByIdsOrNick(post, meId, meNickname))
+  );
 
   const onPostEditOpen = useCallback(() => {
     setPostEditText(post?.content || '');
@@ -280,15 +485,41 @@ export default function PostDetailScreen() {
     try {
       const updated = await boardApi.updatePost(post.id, { content: body });
       const normalized = normalizePost(updated);
-      setPost((prev) => ({ ...prev, ...normalized }));
+      if (normalized) {
+        setPost((prev) =>
+            prev
+                ? { ...prev, ...normalized, isMine: true }
+                : { ...normalized, isMine: true }
+        );
+      } else {
+        setPost((prev) =>
+            prev
+                ? {
+                  ...prev,
+                  content: body,
+                  createdAt: new Date().toISOString(),
+                  isMine: true,
+                }
+                : prev
+        );
+      }
+      markOwnedPost(post.id);
       setPostEditOpen(false);
     } catch (e) {
       Alert.alert('수정 실패', e?.message || '게시글을 수정하지 못했습니다.');
     }
-  }, [post, postEditText]);
+  }, [markOwnedPost, post, postEditText]);
 
   const onPostDelete = useCallback(() => {
     if (!post) return;
+    const mine =
+        post.isMine ||
+        myPostIdsRef.current.has(String(post.id)) ||
+        isMineByIdsOrNick(post, meId, meNickname);
+    if (!mine) {
+      Alert.alert('삭제', '본인이 작성한 글만 삭제할 수 있어요.');
+      return;
+    }
     Alert.alert('삭제', '게시글을 삭제할까요?', [
       { text: '취소', style: 'cancel' },
       {
@@ -297,6 +528,7 @@ export default function PostDetailScreen() {
         onPress: async () => {
           try {
             await boardApi.deletePost(post.id);
+            unmarkOwnedPost(post.id);
             router.back();
           } catch (e) {
             Alert.alert('삭제 실패', e?.message || '게시글을 삭제하지 못했습니다.');
@@ -304,7 +536,7 @@ export default function PostDetailScreen() {
         },
       },
     ]);
-  }, [post]);
+  }, [meId, meNickname, post, unmarkOwnedPost]);
 
   const onToggleLike = useCallback(async () => {
     if (!post || likeBusy) return;
@@ -323,16 +555,19 @@ export default function PostDetailScreen() {
       const likesFromRes =
           res?.likesNum ?? res?.likeNum ?? res?.likes ?? res?.likeCount ?? res?.data?.likesNum;
       const likedFromRes = res?.liked ?? res?.isLiked ?? res?.likeYn ?? res?.likeStatus;
+      const finalLiked =
+          likedFromRes !== undefined ? parseLiked(likedFromRes) : optimisticLike;
       setPost((prev) =>
           prev
               ? {
                 ...prev,
                 likesNum:
                     likesFromRes !== undefined ? toNumber(likesFromRes) : prev.likesNum,
-                liked: likedFromRes !== undefined ? parseLiked(likedFromRes) : prev.liked,
+                liked: finalLiked,
               }
               : prev
       );
+      persistLiked(finalLiked);
     } catch (e) {
       setPost((prev) => {
         if (!prev) return prev;
@@ -340,11 +575,12 @@ export default function PostDetailScreen() {
         const restored = optimisticLike ? Math.max(0, likes - 1) : likes + 1;
         return { ...prev, liked: !optimisticLike, likesNum: restored };
       });
+      persistLiked(!optimisticLike);
       Alert.alert('좋아요 실패', e?.message || '좋아요 처리에 실패했습니다.');
     } finally {
       setLikeBusy(false);
     }
-  }, [post, likeBusy]);
+  }, [post, likeBusy, persistLiked]);
 
   const renderComment = useCallback(
       ({ item }) => {
@@ -352,8 +588,8 @@ export default function PostDetailScreen() {
         return (
             <View style={S.cmtCard}>
               <View style={S.cmtHead}>
-                <Text style={S.cmtNick}>{item.nickname || '익명'}</Text>
-                <Text style={S.cmtDate}>{formatKST(item.createdAt)}</Text>
+                <Text style={S.cmtNick}>{item.nickname}</Text>
+                <Text style={S.cmtDate}>{item.createdAt}</Text>
               </View>
               <Text style={S.cmtBody}>{item.content}</Text>
               <View style={S.cmtActions}>
@@ -410,7 +646,7 @@ export default function PostDetailScreen() {
                         <View style={S.postCardBig}>
                           <View style={S.postHead}>
                             <Text style={S.nickBig}>{post.nickname || '익명'}</Text>
-                            <Text style={S.dateBig}>{formatKST(post.createdAt)}</Text>
+                            <Text style={S.dateBig}>{post.createdAt}</Text>
                           </View>
 
                           <Text style={S.bodyBig}>{post.content}</Text>
