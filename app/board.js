@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../lib/auth-context';
+import { boardApi } from '../lib/apiClient';
 
 // 간단한 유틸
 const nowISO = () => new Date().toISOString();
@@ -66,11 +67,24 @@ const normalizePost = (raw) => {
   const idValue =
       raw.id ?? raw.postId ?? raw.post_id ?? raw.postID ?? raw.uuid ?? raw._id ?? raw.boardPostId;
   if (idValue == null) return null;
-  const likes = toNumber(raw.likes_count);
-  const comments = toNumber(raw.comments_count);
-  const nickname = raw.author_nickname ;
-  const createdAt = raw.created_at;
-  const authorId = raw.user_id;
+  const likes = toNumber(
+      raw.likes_count ?? raw.likesNum ?? raw.likeNum ?? raw.likes ?? raw.likeCount ?? raw.likesCnt
+  );
+  const comments = toNumber(
+      raw.comments_count ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
+  );
+  const nickname =
+      raw.author_nickname ??
+      raw.nickname ??
+      raw.writer ??
+      raw.author ??
+      raw.userNickname ??
+      raw.authorNickname ??
+      raw.writerNickname ??
+      '익명';
+  const createdAt =
+      raw.created_at ?? raw.createdAt ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString();
+  const authorId = raw.user_id ?? raw.userId ?? raw.authorId ?? raw.ownerId;
   const mineRaw =
       raw.isMine ??
       raw.mine ??
@@ -117,6 +131,8 @@ export default function BoardScreen() {
   const [myNickname, setMyNickname] = useState(() => userNickname || '');
   const [myId, setMyId] = useState(null);
   const [myPosts, setMyPosts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const myPostSet = useMemo(() => new Set(myPosts), [myPosts]);
 
@@ -185,14 +201,58 @@ export default function BoardScreen() {
   }, [userNickname]);
 
   // 저장
-  const persist = async (next) => {
-    setPosts(next);
+  const persist = useCallback(async (nextOrUpdater) => {
+    let resolved = [];
+    setPosts((prev) => {
+      const base = Array.isArray(prev) ? prev : [];
+      const nextValue =
+          typeof nextOrUpdater === 'function'
+              ? nextOrUpdater(base)
+              : Array.isArray(nextOrUpdater)
+                  ? nextOrUpdater
+                  : base;
+      resolved = Array.isArray(nextValue) ? nextValue : [];
+      return resolved;
+    });
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(resolved || []));
     } catch (e) {
       console.warn('Failed to save posts', e);
     }
-  };
+  }, []);
+
+  const loadPosts = useCallback(
+      async ({ silent = false, suppressAlert = false } = {}) => {
+        try {
+          if (!silent) setLoading(true);
+          const payload = await boardApi.getPosts();
+          const list = extractList(payload)
+              .map((item) => normalizePost(item))
+              .filter(Boolean);
+          await persist(list);
+        } catch (e) {
+          console.warn('Failed to fetch board posts', e);
+          if (!suppressAlert) {
+            Alert.alert('불러오기 실패', e?.message || '게시글을 불러오지 못했습니다.');
+          }
+        } finally {
+          if (!silent) setLoading(false);
+        }
+      },
+      [persist]
+  );
+
+  useFocusEffect(
+      useCallback(() => {
+        loadPosts();
+      }, [loadPosts])
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadPosts({ silent: true, suppressAlert: true });
+    setRefreshing(false);
+  }, [loadPosts]);
 
   const onCreate = async () => {
     const body = content.trim();
@@ -203,32 +263,52 @@ export default function BoardScreen() {
     }
     const authorId = (await ensureUserId()) || myId;
 
-    const post = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      content: body,
-      nickname,
-      createdAt: nowISO(),
-      likes: 0,
-      comments: [],
-      ...(authorId ? { authorId } : {}),
-    };
+    try {
+      const payload = { content: body };
+      if (nickname) payload.nickname = nickname;
+      const created = await boardApi.createPost(payload);
+      const normalized = normalizePost(created?.data ?? created) ?? {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        content: body,
+        nickname: nickname || '익명',
+        createdAt: nowISO(),
+        likesNum: 0,
+        commentsNum: 0,
+        ...(authorId ? { authorId } : {}),
+      };
 
-    await persist([post, ...posts]);
-    setMyPosts((prev) => {
-      if (prev.includes(post.id)) return prev;
-      const next = [...prev, post.id];
-      AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch((e) =>
-          console.warn('Failed to save my posts', e)
-      );
-      return next;
-    });
-    setContent('');
-    setComposeOpen(false);
+      await persist((prev) => [normalized, ...(prev || [])]);
+      const newId = normalized.id ? String(normalized.id) : null;
+      if (newId) {
+        setMyPosts((prev) => {
+          if (prev.includes(newId)) return prev;
+          const next = [...prev, newId];
+          AsyncStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)).catch((e) =>
+              console.warn('Failed to save my posts', e)
+          );
+          return next;
+        });
+      }
+      setContent('');
+      setComposeOpen(false);
+    } catch (e) {
+      if (e?.status === 401) {
+        Alert.alert('로그인 필요', '로그인 후 글쓰기를 이용해주세요.');
+      } else {
+        Alert.alert('작성 실패', e?.message || '게시글을 작성하지 못했습니다.');
+      }
+    }
   };
 
   const onLike = async (id) => {
-    const next = posts.map((p) => (p.id === id ? { ...p, likes: (p.likes || 0) + 1 } : p));
-    await persist(next);
+    await persist((prev) => {
+      const base = Array.isArray(prev) ? prev : [];
+      return base.map((p) => {
+        if (p.id !== id) return p;
+        const currentLikes = toNumber(p.likesNum ?? p.likes ?? 0);
+        return { ...p, likesNum: currentLikes + 1, likes: currentLikes + 1 };
+      });
+    });
   };
 
   const onDelete = async (id) => {
@@ -249,8 +329,29 @@ export default function BoardScreen() {
         text: '삭제',
         style: 'destructive',
         onPress: async () => {
-          const next = posts.filter((p) => p.id !== id);
-          await persist(next);
+          try {
+            await boardApi.deletePost(id);
+          } catch (e) {
+            if (e?.status === 401) {
+              Alert.alert('로그인 필요', '로그인 후 삭제할 수 있습니다.');
+              return;
+            }
+            if (e?.status === 403) {
+              Alert.alert('삭제 불가', '본인이 작성한 글만 삭제할 수 있어요.');
+              return;
+            }
+            if (e?.status === 404) {
+              // 이미 삭제된 경우에는 로컬에서만 제거
+              console.warn('Post already removed remotely');
+            } else {
+              Alert.alert('삭제 실패', e?.message || '게시글을 삭제하지 못했습니다.');
+              return;
+            }
+          }
+          await persist((prev) => {
+            const base = Array.isArray(prev) ? prev : [];
+            return base.filter((p) => p.id !== id);
+          });
           setMyPosts((prev) => {
             if (!prev.includes(id)) return prev;
             const updated = prev.filter((pid) => pid !== id);
@@ -276,6 +377,8 @@ export default function BoardScreen() {
       if (item?.authorId && myId) return item.authorId === myId;
       return myPostSet.has(item.id);
     })();
+    const likeCount = toNumber(item.likesNum ?? item.likes ?? item.likeCount);
+    const commentCount = toNumber(item.commentsNum ?? item.commentCount ?? item.comments);
 
     return (
         <TouchableOpacity
@@ -297,7 +400,7 @@ export default function BoardScreen() {
 
           <View style={styles.cardActions}>
             <View style={styles.pill}>
-              <Text style={styles.pillText}>💬 {item.commentCount || 0}</Text>
+              <Text style={styles.pillText}>💬 {commentCount}</Text>
             </View>
 
             <Pressable
@@ -308,7 +411,7 @@ export default function BoardScreen() {
                 }}
                 hitSlop={6}
             >
-              <Text style={styles.pillText}>❤️ {item.likes || 0}</Text>
+              <Text style={styles.pillText}>❤️ {likeCount}</Text>
             </Pressable>
 
             <View style={{ flex: 1 }} />
@@ -366,10 +469,20 @@ export default function BoardScreen() {
 
         <FlatList
             data={filtered}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => String(item.id)}
             renderItem={renderItem}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-            ListEmptyComponent={<Text style={styles.empty}>첫 글을 남겨 보세요! </Text>}
+            ListEmptyComponent={
+              <Text style={styles.empty}>
+                {search.trim()
+                    ? '조건에 맞는 게시글이 없어요.'
+                    : loading
+                        ? '게시글을 불러오는 중...'
+                        : '첫 글을 남겨 보세요! '}
+              </Text>
+            }
+            refreshing={refreshing}
+            onRefresh={onRefresh}
             showsVerticalScrollIndicator={false}
         />
 
