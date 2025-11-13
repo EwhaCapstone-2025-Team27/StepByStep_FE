@@ -55,6 +55,20 @@ const parseLiked = (value) => {
   return false;
 };
 
+const parseMineFlag = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    if (['true', '1', 'y', 'yes', 'mine', 'owner'].includes(lowered)) return true;
+    if (['false', '0', 'n', 'no'].includes(lowered)) return false;
+  }
+  return undefined;
+};
+
 const resolveNickname = (raw) => {
   const pickString = (value) => {
     if (typeof value === 'string') {
@@ -107,7 +121,17 @@ const normalizePost = (raw) => {
     likesNum: likes,
     liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
     authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? null,
-    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+    isMine:
+        parseMineFlag(
+            raw.isMine ??
+            raw.mine ??
+            raw.mineYn ??
+            raw.ownerYn ??
+            raw.is_mine ??
+            raw.is_owner ??
+            raw.isAuthor ??
+            raw.isWriter
+        ),
   };
 };
 
@@ -126,7 +150,17 @@ const normalizeComment = (raw) => {
         new Date().toISOString(),
     authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? null,
     postId: raw.postId ?? raw.boardId ?? raw.board_id ?? raw.post_id ?? null,
-    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+    isMine:
+        parseMineFlag(
+            raw.isMine ??
+            raw.mine ??
+            raw.mineYn ??
+            raw.ownerYn ??
+            raw.is_mine ??
+            raw.is_owner ??
+            raw.isAuthor ??
+            raw.isWriter
+        ),
   };
 };
 
@@ -191,6 +225,11 @@ export default function PostDetailScreen() {
 
   const [postEditOpen, setPostEditOpen] = useState(false);
   const [postEditText, setPostEditText] = useState('');
+  const closeEditModal = useCallback(() => {
+    setEditOpen(false);
+    setEditTarget(null);
+    setEditText('');
+  }, []);
 
   const listRef = useRef(null);
   const scrollToBottom = useCallback(
@@ -278,12 +317,12 @@ export default function PostDetailScreen() {
       const updated = await commentApi.update(postId, editTarget.id, { content });
       const normalized = normalizeComment(updated);
       setComments((prev) => prev.map((c) => (c.id === editTarget.id ? normalized : c)));
-      setEditOpen(false);
+      closeEditModal();
       scrollToBottom();
     } catch (e) {
       Alert.alert('수정 실패', e?.message || '댓글을 수정하지 못했습니다.');
     }
-  }, [editTarget, editText, postId, scrollToBottom]);
+  }, [closeEditModal, editTarget, editText, postId, scrollToBottom]);
 
   const onDeleteComment = useCallback((comment) => {
     if (!comment) return;
@@ -301,15 +340,22 @@ export default function PostDetailScreen() {
                     ? { ...prev, commentsNum: Math.max(0, toNumber(prev.commentsNum) - 1) }
                     : prev
             );
+            if (editTarget?.id === comment.id) {
+              closeEditModal();
+            }
           } catch (e) {
             Alert.alert('삭제 실패', e?.message || '댓글을 삭제하지 못했습니다.');
           }
         },
       },
     ]);
-  }, [postId]);
+  }, [closeEditModal, editTarget, postId]);
 
-  const isMinePost = post && isMineByIdsOrNick(post, meId, meNickname);
+  const isMinePost = useMemo(() => {
+    if (!post) return false;
+    if (typeof post.isMine === 'boolean') return post.isMine;
+    return isMineByIdsOrNick(post, meId, meNickname);
+  }, [post, meId, meNickname]);
 
   const onPostEditOpen = useCallback(() => {
     setPostEditText(post?.content || '');
@@ -394,7 +440,7 @@ export default function PostDetailScreen() {
 
   const renderComment = useCallback(
       ({ item }) => {
-        const mine =
+        const isMinePost =
             typeof item?.isMine === 'boolean' ? item.isMine : isMineByIdsOrNick(item, meId, meNickname);
         return (
             <View style={S.cmtCard}>
@@ -404,7 +450,7 @@ export default function PostDetailScreen() {
               </View>
               <Text style={S.cmtBody}>{item.content}</Text>
               <View style={S.cmtActions}>
-                {mine && (
+                {isMinePost && (
                     <View style={S.cmtActions}>
                       <Pressable style={S.pill} onPress={() => openEdit(item)}>
                         <Text style={S.pillText}>수정</Text>
@@ -538,10 +584,15 @@ export default function PostDetailScreen() {
           </View>
         </KeyboardAvoidingView>
 
-        <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => setEditOpen(false)}>
+        <Modal visible={editOpen} transparent animationType="fade" onRequestClose={closeEditModal}>
           <View style={S.modalBg}>
             <View style={S.modal}>
               <Text style={S.modalTitle}>댓글 수정</Text>
+              {editTarget && (
+                  <Text style={S.modalSub}>{
+                    `${editTarget.nickname || '익명'} · ${formatKST(editTarget.createdAt)}`
+                  }</Text>
+              )}
               <TextInput
                   value={editText}
                   onChangeText={setEditText}
@@ -551,7 +602,7 @@ export default function PostDetailScreen() {
                   multiline
               />
               <View style={S.modalRow}>
-                <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={() => setEditOpen(false)}>
+                <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={closeEditModal}>
                   <Text style={S.modalBtnText}>취소</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[S.modalBtn, S.modalOK]} onPress={onEditSubmit}>
@@ -721,6 +772,7 @@ const S = StyleSheet.create({
   },
   modal: { width: '100%', maxWidth: 380, backgroundColor: '#fff', borderRadius: 16, padding: 16 },
   modalTitle: { fontSize: 16, fontWeight: '800', color: TEXT_MAIN },
+  modalSub: { marginTop: 4, color: '#6b7280', fontSize: 12 },
   editInput: {
     minHeight: 100,
     marginTop: 10,
