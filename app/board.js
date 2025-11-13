@@ -133,6 +133,9 @@ export default function BoardScreen() {
   const [myPosts, setMyPosts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editContent, setEditContent] = useState('');
 
   const myPostSet = useMemo(() => new Set(myPosts), [myPosts]);
 
@@ -365,6 +368,75 @@ export default function BoardScreen() {
     ]);
   };
 
+  const isPostMine = useCallback(
+      (post) => {
+        if (!post) return false;
+        if (post?.isMine !== undefined) return !!post.isMine;
+        if (post?.authorId && myId) return post.authorId === myId;
+        return myPostSet.has(post?.id);
+      },
+      [myId, myPostSet]
+  );
+
+  const closeEdit = useCallback(() => {
+    setEditOpen(false);
+    setEditTarget(null);
+    setEditContent('');
+  }, []);
+
+  const openEdit = useCallback(
+      (post) => {
+        if (!post) return;
+        if (!isPostMine(post)) {
+          Alert.alert('수정 불가', '본인이 작성한 글만 수정할 수 있어요.');
+          return;
+        }
+        setEditTarget(post);
+        setEditContent(post.content ?? '');
+        setEditOpen(true);
+      },
+      [isPostMine]
+  );
+
+  const onSaveEdit = useCallback(async () => {
+    if (!editTarget) return;
+    if (!isPostMine(editTarget)) {
+      Alert.alert('수정 불가', '본인이 작성한 글만 수정할 수 있어요.');
+      return;
+    }
+    const body = editContent.trim();
+    if (!body) {
+      Alert.alert('내용을 입력해주세요');
+      return;
+    }
+    try {
+      const id = editTarget.id;
+      const payload = await boardApi.updatePost(id, { content: body });
+      const normalized = normalizePost(payload?.data ?? payload);
+      await persist((prev) => {
+        const base = Array.isArray(prev) ? prev : [];
+        return base.map((p) => {
+          if (p.id !== id) return p;
+          if (normalized) {
+            return { ...p, ...normalized, content: normalized.content ?? body };
+          }
+          return { ...p, content: body };
+        });
+      });
+      closeEdit();
+    } catch (e) {
+      if (e?.status === 401) {
+        Alert.alert('로그인 필요', '로그인 후 수정할 수 있습니다.');
+        return;
+      }
+      if (e?.status === 403) {
+        Alert.alert('수정 불가', '본인이 작성한 글만 수정할 수 있어요.');
+        return;
+      }
+      Alert.alert('수정 실패', e?.message || '게시글을 수정하지 못했습니다.');
+    }
+  }, [closeEdit, editContent, editTarget, isPostMine, persist]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return posts;
@@ -372,11 +444,7 @@ export default function BoardScreen() {
   }, [posts, search]);
 
   const renderItem = ({ item }) => {
-    const isMine = (() => {
-      if (item?.isMine !== undefined) return !!item.isMine;
-      if (item?.authorId && myId) return item.authorId === myId;
-      return myPostSet.has(item.id);
-    })();
+    const isMine = isPostMine(item);
     const likeCount = toNumber(item.likesNum ?? item.likes ?? item.likeCount);
     const commentCount = toNumber(item.commentsNum ?? item.commentCount ?? item.comments);
 
@@ -417,16 +485,28 @@ export default function BoardScreen() {
             <View style={{ flex: 1 }} />
 
             {isMine && (
-                <Pressable
-                    style={[styles.pill, styles.danger]}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      onDelete(item.id);
-                    }}
-                    hitSlop={6}
-                >
-                  <Text style={[styles.pillText, { color: '#b91c1c' }]}>삭제</Text>
-                </Pressable>
+                <>
+                  <Pressable
+                      style={styles.pill}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        openEdit(item);
+                      }}
+                      hitSlop={6}
+                  >
+                    <Text style={styles.pillText}>수정</Text>
+                  </Pressable>
+                  <Pressable
+                      style={[styles.pill, styles.danger]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        onDelete(item.id);
+                      }}
+                      hitSlop={6}
+                  >
+                    <Text style={[styles.pillText, { color: '#b91c1c' }]}>삭제</Text>
+                  </Pressable>
+                </>
             )}
           </View>
         </TouchableOpacity>
@@ -513,6 +593,37 @@ export default function BoardScreen() {
               />
               <TouchableOpacity style={styles.submit} onPress={onCreate} activeOpacity={0.9}>
                 <Text style={styles.submitText}>게시하기</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        <Modal visible={editOpen} animationType="slide" onRequestClose={closeEdit}>
+          <KeyboardAvoidingView
+              style={[styles.modalSafe, { paddingTop: insets.top + 8 }]}
+              behavior={Platform.select({ ios: 'padding', android: undefined })}
+          >
+            <View style={styles.modalHeader}>
+              <Pressable onPress={closeEdit}>
+                <Text style={styles.cancel}>닫기</Text>
+              </Pressable>
+              <Text style={styles.modalTitle}>글 수정</Text>
+              <View style={{ width: 48 }} />
+            </View>
+
+            <View style={styles.modalBody}>
+              <TextInput
+                  value={editContent}
+                  onChangeText={setEditContent}
+                  placeholder="수정할 내용을 입력하세요"
+                  placeholderTextColor="#9ca3af"
+                  style={styles.textarea}
+                  multiline
+                  textAlignVertical="top"
+                  maxLength={1000}
+              />
+              <TouchableOpacity style={styles.submit} onPress={onSaveEdit} activeOpacity={0.9}>
+                <Text style={styles.submitText}>수정하기</Text>
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
