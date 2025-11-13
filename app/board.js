@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -45,6 +45,66 @@ const CARD = '#FFFFFF';
 const BORDER = '#E6E7EC';
 const TEXT_MAIN = '#0E0F12';
 const TEXT_SUB = '#5E6472';
+
+const toNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const parseBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') {
+    const lowered = value.toLowerCase();
+    return ['true', '1', 'y', 'yes', 'on'].includes(lowered);
+  }
+  return false;
+};
+
+const normalizePost = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const idValue =
+      raw.id ?? raw.postId ?? raw.post_id ?? raw.postID ?? raw.uuid ?? raw._id ?? raw.boardPostId;
+  if (idValue == null) return null;
+  const likes = toNumber(raw.likes_count);
+  const comments = toNumber(raw.comments_count);
+  const nickname = raw.author_nickname ;
+  const createdAt = raw.created_at;
+  const authorId = raw.user_id;
+  const mineRaw =
+      raw.isMine ??
+      raw.mine ??
+      raw.owned ??
+      raw.isOwned ??
+      raw.owner ??
+      raw.mineYn ??
+      raw.mineYN ??
+      raw.isAuthor ??
+      raw.isWriter ??
+      undefined;
+
+  return {
+    id: String(idValue),
+    nickname,
+    createdAt,
+    content: raw.content ?? raw.body ?? '',
+    commentsNum: comments,
+    likesNum: likes,
+    authorId: authorId != null ? String(authorId) : null,
+    isMine: mineRaw !== undefined ? parseBoolean(mineRaw) : undefined,
+  };
+};
+
+const extractList = (payload) => {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.content)) return payload.content;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.results)) return payload.results;
+  if (Array.isArray(payload.items)) return payload.items;
+  if (payload.page && Array.isArray(payload.page.content)) return payload.page.content;
+  return [];
+};
 
 export default function BoardScreen() {
   const auth = useAuth?.();

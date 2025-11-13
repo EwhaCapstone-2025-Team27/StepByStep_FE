@@ -55,6 +55,41 @@ const parseLiked = (value) => {
   return false;
 };
 
+const resolveNickname = (raw) => {
+  const pickString = (value) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+    return '';
+  };
+  const fromNested = (obj) => {
+    if (!obj || typeof obj !== 'object') return '';
+    return (
+        pickString(obj.nickname) ||
+        pickString(obj.name) ||
+        (obj.profile && pickString(obj.profile.nickname)) ||
+        ''
+    );
+  };
+
+  return (
+      pickString(raw?.nickname) ||
+      pickString(raw?.writer) ||
+      pickString(raw?.author) ||
+      pickString(raw?.userNickname) ||
+      pickString(raw?.authorNickname) ||
+      pickString(raw?.writerNickname) ||
+      pickString(raw?.createdByNickname) ||
+      fromNested(raw?.user) ||
+      fromNested(raw?.author) ||
+      fromNested(raw?.writer) ||
+      fromNested(raw?.owner) ||
+      fromNested(raw?.createdBy) ||
+      '익명'
+  );
+};
+
 const normalizePost = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   const likes = toNumber(raw.likesNum ?? raw.likeNum ?? raw.likes ?? raw.likeCount);
@@ -63,7 +98,7 @@ const normalizePost = (raw) => {
   );
   return {
     id: raw.id ?? raw.postId ?? raw.postID ?? raw.post_id ?? raw.uuid ?? raw._id,
-    nickname: raw.nickname ?? raw.writer ?? raw.author ?? '익명',
+    nickname: resolveNickname(raw),
     createdAt:
         raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
     content: raw.content ?? raw.body ?? '',
@@ -79,7 +114,7 @@ const normalizeComment = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   return {
     id: raw.id ?? raw.commentId ?? raw.commentID ?? raw.uuid ?? raw._id,
-    nickname: raw.nickname ?? raw.writer ?? raw.author ?? '익명',
+    nickname: resolveNickname(raw),
     content: raw.content ?? raw.comments ?? raw.body ?? '',
     createdAt:
         raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
