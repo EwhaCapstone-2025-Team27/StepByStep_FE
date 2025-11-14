@@ -477,10 +477,10 @@ export default function BoardScreen() {
           </TouchableOpacity>
           <Text style={styles.headerTitle}>익명 게시판</Text>
           <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={onRefresh}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
-            <Text style={styles.headerIcon}>✕</Text>
+            <Text style={styles.headerIcon}>↻</Text>
           </TouchableOpacity>
         </View>
 
