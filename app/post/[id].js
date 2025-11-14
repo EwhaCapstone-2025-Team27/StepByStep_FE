@@ -25,6 +25,46 @@ const BORDER = '#E6E7EC';
 const TEXT_MAIN = '#0E0F12';
 const TEXT_SUB = '#5E6472';
 
+const LOCAL_LIKE_STORAGE_KEY = 'local_post_like_state';
+
+const readLocalLikeStore = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_LIKE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {}
+  return {};
+};
+
+const getLocalLikeSnapshot = async (postId) => {
+  if (!postId) return null;
+  const store = await readLocalLikeStore();
+  const key = String(postId);
+  const entry = store?.[key];
+  if (!entry || typeof entry !== 'object') return null;
+  const liked = parseLiked(entry.liked);
+  const likesNum = toNumber(entry.likesNum, undefined);
+  return { liked, likesNum };
+};
+
+const setLocalLikeSnapshot = async (postId, liked, likesNum) => {
+  if (!postId) return;
+  try {
+    const store = await readLocalLikeStore();
+    const key = String(postId);
+    if (liked) {
+      store[key] = {
+        liked: true,
+        likesNum: toNumber(likesNum),
+      };
+    } else {
+      delete store[key];
+    }
+    await AsyncStorage.setItem(LOCAL_LIKE_STORAGE_KEY, JSON.stringify(store));
+  } catch {}
+};
+
 const formatKST = (iso) => {
   try {
     const d = new Date(iso);
@@ -55,6 +95,20 @@ const parseLiked = (value) => {
   return false;
 };
 
+const parseMineFlag = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    if (['true', '1', 'y', 'yes', 'mine', 'owner'].includes(lowered)) return true;
+    if (['false', '0', 'n', 'no'].includes(lowered)) return false;
+  }
+  return undefined;
+};
+
 const resolveNickname = (raw) => {
   const pickString = (value) => {
     if (typeof value === 'string') {
@@ -80,6 +134,7 @@ const resolveNickname = (raw) => {
       pickString(raw?.userNickname) ||
       pickString(raw?.authorNickname) ||
       pickString(raw?.writerNickname) ||
+      pickString(raw?.author_nickname) ||
       pickString(raw?.createdByNickname) ||
       fromNested(raw?.user) ||
       fromNested(raw?.author) ||
@@ -96,6 +151,24 @@ const normalizePost = (raw) => {
   const comments = toNumber(
       raw.commentsNum ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
   );
+  const nestedAuthorId =
+      raw.user?.id ??
+      raw.user?.userId ??
+      raw.user?.user_id ??
+      raw.author?.id ??
+      raw.author?.userId ??
+      raw.author?.user_id ??
+      raw.writer?.id ??
+      raw.writer?.userId ??
+      raw.writer?.user_id ??
+      raw.owner?.id ??
+      raw.owner?.userId ??
+      raw.owner?.user_id ??
+      raw.createdBy?.id ??
+      raw.createdBy?.userId ??
+      raw.createdBy?.user_id ??
+      null;
+
   return {
     id: raw.id ?? raw.postId ?? raw.postID ?? raw.post_id ?? raw.uuid ?? raw._id,
     nickname: resolveNickname(raw),
@@ -105,21 +178,77 @@ const normalizePost = (raw) => {
     commentsNum: comments,
     likesNum: likes,
     liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
-    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
-    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? nestedAuthorId,
+    isMine:
+        parseMineFlag(
+            raw.isMine ??
+            raw.mine ??
+            raw.mineYn ??
+            raw.ownerYn ??
+            raw.is_mine ??
+            raw.is_owner ??
+            raw.isAuthor ??
+            raw.isWriter
+        ),
   };
 };
 
 const normalizeComment = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
+  const nestedAuthorId =
+      raw.user?.id ??
+      raw.user?.userId ??
+      raw.user?.user_id ??
+      raw.author?.id ??
+      raw.author?.userId ??
+      raw.author?.user_id ??
+      raw.writer?.id ??
+      raw.writer?.userId ??
+      raw.writer?.user_id ??
+      raw.owner?.id ??
+      raw.owner?.userId ??
+      raw.owner?.user_id ??
+      raw.createdBy?.id ??
+      raw.createdBy?.userId ??
+      raw.createdBy?.user_id ??
+      null;
+
+  const nestedPostId =
+      raw.post?.id ??
+      raw.post?.postId ??
+      raw.post?.post_id ??
+      raw.board?.id ??
+      raw.board?.boardId ??
+      raw.board?.board_id ??
+      raw.postRef?.id ??
+      raw.postRef?.postId ??
+      raw.postRef?.post_id ??
+      null;
+
   return {
     id: raw.id ?? raw.commentId ?? raw.commentID ?? raw.uuid ?? raw._id,
     nickname: resolveNickname(raw),
     content: raw.content ?? raw.comments ?? raw.body ?? '',
     createdAt:
-        raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
-    authorId: raw.authorId ?? raw.userId ?? raw.ownerId ?? null,
-    isMine: typeof raw.isMine === 'boolean' ? raw.isMine : undefined,
+        raw.createdAt ??
+        raw.created_at ??
+        raw.createDate ??
+        raw.createdDate ??
+        raw.created ??
+        new Date().toISOString(),
+    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? nestedAuthorId,
+    postId: raw.postId ?? raw.boardId ?? raw.board_id ?? raw.post_id ?? nestedPostId,
+    isMine:
+        parseMineFlag(
+            raw.isMine ??
+            raw.mine ??
+            raw.mineYn ??
+            raw.ownerYn ??
+            raw.is_mine ??
+            raw.is_owner ??
+            raw.isAuthor ??
+            raw.isWriter
+        ),
   };
 };
 
@@ -184,6 +313,11 @@ export default function PostDetailScreen() {
 
   const [postEditOpen, setPostEditOpen] = useState(false);
   const [postEditText, setPostEditText] = useState('');
+  const closeEditModal = useCallback(() => {
+    setEditOpen(false);
+    setEditTarget(null);
+    setEditText('');
+  }, []);
 
   const listRef = useRef(null);
   const scrollToBottom = useCallback(
@@ -201,12 +335,30 @@ export default function PostDetailScreen() {
     try {
       setLoading(true);
       const payload = await boardApi.getPostById(postId);
-      const normalizedPost = normalizePost(payload);
+      let normalizedPost = normalizePost(payload);
+      const storedLike = await getLocalLikeSnapshot(postId);
+      if (storedLike) {
+        normalizedPost = normalizedPost
+            ? {
+              ...normalizedPost,
+              liked: storedLike.liked ?? normalizedPost.liked,
+              likesNum:
+                  storedLike.likesNum !== undefined
+                      ? storedLike.likesNum
+                      : normalizedPost.likesNum,
+            }
+            : {
+              liked: storedLike.liked,
+              likesNum: storedLike.likesNum,
+            };
+      }
       const commentSource = Array.isArray(payload?.data)
           ? payload.data
           : Array.isArray(payload?.comments)
               ? payload.comments
-              : [];
+              : Array.isArray(payload?.board_comments)
+                  ? payload.board_comments
+                  : [];
       const normalizedComments = commentSource
           .map((item) => normalizeComment(item))
           .filter(Boolean);
@@ -266,15 +418,15 @@ export default function PostDetailScreen() {
     const content = editText.trim();
     if (!content) return;
     try {
-      const updated = await commentApi.update(editTarget.id, { content });
+      const updated = await commentApi.update(postId, editTarget.id, { content });
       const normalized = normalizeComment(updated);
       setComments((prev) => prev.map((c) => (c.id === editTarget.id ? normalized : c)));
-      setEditOpen(false);
+      closeEditModal();
       scrollToBottom();
     } catch (e) {
       Alert.alert('수정 실패', e?.message || '댓글을 수정하지 못했습니다.');
     }
-  }, [editTarget, editText, scrollToBottom]);
+  }, [closeEditModal, editTarget, editText, postId, scrollToBottom]);
 
   const onDeleteComment = useCallback((comment) => {
     if (!comment) return;
@@ -285,22 +437,29 @@ export default function PostDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await commentApi.delete(comment.id);
+            await commentApi.delete(postId, comment.id);
             setComments((prev) => prev.filter((c) => c.id !== comment.id));
             setPost((prev) =>
                 prev
                     ? { ...prev, commentsNum: Math.max(0, toNumber(prev.commentsNum) - 1) }
                     : prev
             );
+            if (editTarget?.id === comment.id) {
+              closeEditModal();
+            }
           } catch (e) {
             Alert.alert('삭제 실패', e?.message || '댓글을 삭제하지 못했습니다.');
           }
         },
       },
     ]);
-  }, []);
+  }, [closeEditModal, editTarget, postId]);
 
-  const isMinePost = post && isMineByIdsOrNick(post, meId, meNickname);
+  const isMinePost = useMemo(() => {
+    if (!post) return false;
+    if (typeof post.isMine === 'boolean') return post.isMine;
+    return isMineByIdsOrNick(post, meId, meNickname);
+  }, [post, meId, meNickname]);
 
   const onPostEditOpen = useCallback(() => {
     setPostEditText(post?.content || '');
@@ -347,12 +506,18 @@ export default function PostDetailScreen() {
     if (!post || likeBusy) return;
     const optimisticLike = !post.liked;
     setLikeBusy(true);
+    const postKey = post.id;
     setPost((prev) => {
       if (!prev) return prev;
       const likes = toNumber(prev.likesNum);
       const nextLikes = optimisticLike ? likes + 1 : Math.max(0, likes - 1);
       return { ...prev, liked: optimisticLike, likesNum: nextLikes };
     });
+    if (optimisticLike) {
+      setLocalLikeSnapshot(postKey, true, toNumber(post.likesNum) + 1).catch(() => {});
+    } else {
+      setLocalLikeSnapshot(postKey, false).catch(() => {});
+    }
     try {
       const res = optimisticLike
           ? await boardApi.likeOn(post.id, { likeNum: post.likesNum })
@@ -360,16 +525,24 @@ export default function PostDetailScreen() {
       const likesFromRes =
           res?.likesNum ?? res?.likeNum ?? res?.likes ?? res?.likeCount ?? res?.data?.likesNum;
       const likedFromRes = res?.liked ?? res?.isLiked ?? res?.likeYn ?? res?.likeStatus;
-      setPost((prev) =>
-          prev
-              ? {
-                ...prev,
-                likesNum:
-                    likesFromRes !== undefined ? toNumber(likesFromRes) : prev.likesNum,
-                liked: likedFromRes !== undefined ? parseLiked(likedFromRes) : prev.liked,
-              }
-              : prev
-      );
+      let resolvedLikes;
+      let resolvedLiked;
+      setPost((prev) => {
+        if (!prev) return prev;
+        resolvedLikes = likesFromRes !== undefined ? toNumber(likesFromRes) : prev.likesNum;
+        resolvedLiked =
+            likedFromRes !== undefined ? parseLiked(likedFromRes) : prev.liked;
+        return {
+          ...prev,
+          likesNum: resolvedLikes,
+          liked: resolvedLiked,
+        };
+      });
+      if (resolvedLiked !== undefined) {
+        setLocalLikeSnapshot(postKey, resolvedLiked, resolvedLikes).catch(() => {});
+      } else if (resolvedLikes !== undefined) {
+        setLocalLikeSnapshot(postKey, optimisticLike, resolvedLikes).catch(() => {});
+      }
     } catch (e) {
       setPost((prev) => {
         if (!prev) return prev;
@@ -377,6 +550,11 @@ export default function PostDetailScreen() {
         const restored = optimisticLike ? Math.max(0, likes - 1) : likes + 1;
         return { ...prev, liked: !optimisticLike, likesNum: restored };
       });
+      if (optimisticLike) {
+        setLocalLikeSnapshot(postKey, false).catch(() => {});
+      } else {
+        setLocalLikeSnapshot(postKey, true, toNumber(post.likesNum)).catch(() => {});
+      }
       Alert.alert('좋아요 실패', e?.message || '좋아요 처리에 실패했습니다.');
     } finally {
       setLikeBusy(false);
@@ -385,24 +563,25 @@ export default function PostDetailScreen() {
 
   const renderComment = useCallback(
       ({ item }) => {
-        const mine = isMineByIdsOrNick(item, meId, meNickname);
+        const isMinePost =
+            typeof item?.isMine === 'boolean' ? item.isMine : isMineByIdsOrNick(item, meId, meNickname);
         return (
             <View style={S.cmtCard}>
               <View style={S.cmtHead}>
-                <Text style={S.cmtNick}>{item.nickname || '익명'}</Text>
+                <Text style={S.cmtNick}>{item.nickname}</Text>
                 <Text style={S.cmtDate}>{formatKST(item.createdAt)}</Text>
               </View>
               <Text style={S.cmtBody}>{item.content}</Text>
               <View style={S.cmtActions}>
-                {mine && (
-                    <>
+                {isMinePost && (
+                    <View style={S.cmtActions}>
                       <Pressable style={S.pill} onPress={() => openEdit(item)}>
                         <Text style={S.pillText}>수정</Text>
                       </Pressable>
                       <Pressable style={[S.pill, S.danger]} onPress={() => onDeleteComment(item)}>
                         <Text style={[S.pillText, { color: '#b91c1c' }]}>삭제</Text>
                       </Pressable>
-                    </>
+                    </View>
                 )}
               </View>
             </View>
@@ -462,14 +641,13 @@ export default function PostDetailScreen() {
                               <Text
                                   style={[
                                     S.meta,
-                                    { fontWeight: '700', color: post.liked ? '#ec4899' : '#6b7280' },
+                                    { fontSize: '14', color: post.liked ? '#ec4899' : '#6b7280' },
                                   ]}
                               >
                                 {post.liked ? '💖' : '❤️'} {toNumber(post.likesNum)}
                               </Text>
                             </Pressable>
-                            <Text style={S.meta}>·</Text>
-                            <Text style={S.meta}>💬 {post.commentsNum ?? orderedComments.length}</Text>
+                            <Text style={[S.pill, {paddingHorizontal: 8, paddingVertical: 4}]}>💬 {post.commentsNum ?? orderedComments.length}</Text>
                             <View style={{ flex: 1 }} />
                             {isMinePost && (
                                 <>
@@ -529,10 +707,15 @@ export default function PostDetailScreen() {
           </View>
         </KeyboardAvoidingView>
 
-        <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => setEditOpen(false)}>
+        <Modal visible={editOpen} transparent animationType="fade" onRequestClose={closeEditModal}>
           <View style={S.modalBg}>
             <View style={S.modal}>
               <Text style={S.modalTitle}>댓글 수정</Text>
+              {editTarget && (
+                  <Text style={S.modalSub}>{
+                    `${editTarget.nickname || '익명'} · ${formatKST(editTarget.createdAt)}`
+                  }</Text>
+              )}
               <TextInput
                   value={editText}
                   onChangeText={setEditText}
@@ -542,7 +725,7 @@ export default function PostDetailScreen() {
                   multiline
               />
               <View style={S.modalRow}>
-                <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={() => setEditOpen(false)}>
+                <TouchableOpacity style={[S.modalBtn, S.modalCancel]} onPress={closeEditModal}>
                   <Text style={S.modalBtnText}>취소</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[S.modalBtn, S.modalOK]} onPress={onEditSubmit}>
@@ -712,6 +895,7 @@ const S = StyleSheet.create({
   },
   modal: { width: '100%', maxWidth: 380, backgroundColor: '#fff', borderRadius: 16, padding: 16 },
   modalTitle: { fontSize: 16, fontWeight: '800', color: TEXT_MAIN },
+  modalSub: { marginTop: 4, color: '#6b7280', fontSize: 12 },
   editInput: {
     minHeight: 100,
     marginTop: 10,
