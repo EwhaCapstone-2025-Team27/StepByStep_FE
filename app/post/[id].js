@@ -145,109 +145,173 @@ const resolveNickname = (raw) => {
   );
 };
 
-const normalizePost = (raw) => {
+const unwrapPostSource = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
-  const likes = toNumber(raw.likesNum ?? raw.likeNum ?? raw.likes ?? raw.likeCount);
+  const seen = new Set();
+  let current = raw;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const nested =
+        current.board_posts ??
+        current.board_post ??
+        current.boardPost ??
+        current.board ??
+        current.post ??
+        current.postRef;
+    if (nested && typeof nested === 'object') {
+      current = nested;
+      continue;
+    }
+    const dataCandidate = current.data;
+    if (dataCandidate && typeof dataCandidate === 'object' && !Array.isArray(dataCandidate)) {
+      current = dataCandidate;
+      continue;
+    }
+    break;
+  }
+  return current;
+};
+
+const normalizePost = (raw) => {
+  const source = unwrapPostSource(raw);
+  if (!source) return null;
+  const likes = toNumber(
+      source.likesNum ?? source.likeNum ?? source.likes ?? source.likeCount
+  );
   const comments = toNumber(
-      raw.commentsNum ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
+      source.commentsNum ??
+      source.commentCount ??
+      source.comments ??
+      source.commentCnt ??
+      source.commentsNum
   );
   const nestedAuthorId =
-      raw.user?.id ??
-      raw.user?.userId ??
-      raw.user?.user_id ??
-      raw.author?.id ??
-      raw.author?.userId ??
-      raw.author?.user_id ??
-      raw.writer?.id ??
-      raw.writer?.userId ??
-      raw.writer?.user_id ??
-      raw.owner?.id ??
-      raw.owner?.userId ??
-      raw.owner?.user_id ??
-      raw.createdBy?.id ??
-      raw.createdBy?.userId ??
-      raw.createdBy?.user_id ??
+      source.user?.id ??
+      source.user?.userId ??
+      source.user?.user_id ??
+      source.author?.id ??
+      source.author?.userId ??
+      source.author?.user_id ??
+      source.writer?.id ??
+      source.writer?.userId ??
+      source.writer?.user_id ??
+      source.owner?.id ??
+      source.owner?.userId ??
+      source.owner?.user_id ??
+      source.createdBy?.id ??
+      source.createdBy?.userId ??
+      source.createdBy?.user_id ??
       null;
 
   return {
-    id: raw.id ?? raw.postId ?? raw.postID ?? raw.post_id ?? raw.uuid ?? raw._id,
-    nickname: resolveNickname(raw),
+    id: source.id ?? source.postId ?? source.postID ?? source.post_id ?? source.uuid ?? source._id,
+    nickname: resolveNickname(source),
     createdAt:
-        raw.createdAt ?? raw.created_at ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString(),
-    content: raw.content ?? raw.body ?? '',
+        source.createdAt ??
+        source.created_at ??
+        source.createDate ??
+        source.createdDate ??
+        new Date().toISOString(),
+    content: source.content ?? source.body ?? '',
     commentsNum: comments,
     likesNum: likes,
-    liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
-    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? nestedAuthorId,
+    liked: parseLiked(source.liked ?? source.isLiked ?? source.likeYn ?? source.likeStatus ?? source.likeOn),
+    authorId: source.authorId ?? source.userId ?? source.user_id ?? source.ownerId ?? nestedAuthorId,
     isMine:
         parseMineFlag(
-            raw.isMine ??
-            raw.mine ??
-            raw.mineYn ??
-            raw.ownerYn ??
-            raw.is_mine ??
-            raw.is_owner ??
-            raw.isAuthor ??
-            raw.isWriter
+            source.isMine ??
+            source.mine ??
+            source.mineYn ??
+            source.ownerYn ??
+            source.is_mine ??
+            source.is_owner ??
+            source.isAuthor ??
+            source.isWriter
         ),
   };
 };
 
-const normalizeComment = (raw) => {
+const unwrapCommentSource = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
+  const seen = new Set();
+  let current = raw;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const nested =
+        current.board_comments ??
+        current.board_comment ??
+        current.boardComment ??
+        current.comment;
+    if (nested && typeof nested === 'object') {
+      current = nested;
+      continue;
+    }
+    const dataCandidate = current.data;
+    if (dataCandidate && typeof dataCandidate === 'object' && !Array.isArray(dataCandidate)) {
+      current = dataCandidate;
+      continue;
+    }
+    break;
+  }
+  return current;
+};
+
+const normalizeComment = (raw) => {
+  const source = unwrapCommentSource(raw);
+  if (!source) return null;
   const nestedAuthorId =
-      raw.user?.id ??
-      raw.user?.userId ??
-      raw.user?.user_id ??
-      raw.author?.id ??
-      raw.author?.userId ??
-      raw.author?.user_id ??
-      raw.writer?.id ??
-      raw.writer?.userId ??
-      raw.writer?.user_id ??
-      raw.owner?.id ??
-      raw.owner?.userId ??
-      raw.owner?.user_id ??
-      raw.createdBy?.id ??
-      raw.createdBy?.userId ??
-      raw.createdBy?.user_id ??
+      source.user?.id ??
+      source.user?.userId ??
+      source.user?.user_id ??
+      source.author?.id ??
+      source.author?.userId ??
+      source.author?.user_id ??
+      source.writer?.id ??
+      source.writer?.userId ??
+      source.writer?.user_id ??
+      source.owner?.id ??
+      source.owner?.userId ??
+      source.owner?.user_id ??
+      source.createdBy?.id ??
+      source.createdBy?.userId ??
+      source.createdBy?.user_id ??
       null;
 
   const nestedPostId =
-      raw.post?.id ??
-      raw.post?.postId ??
-      raw.post?.post_id ??
-      raw.board?.id ??
-      raw.board?.boardId ??
-      raw.board?.board_id ??
-      raw.postRef?.id ??
-      raw.postRef?.postId ??
-      raw.postRef?.post_id ??
+      source.post?.id ??
+      source.post?.postId ??
+      source.post?.post_id ??
+      source.board?.id ??
+      source.board?.boardId ??
+      source.board?.board_id ??
+      source.postRef?.id ??
+      source.postRef?.postId ??
+      source.postRef?.post_id ??
       null;
 
   return {
-    id: raw.id ?? raw.commentId ?? raw.commentID ?? raw.uuid ?? raw._id,
-    nickname: resolveNickname(raw),
-    content: raw.content ?? raw.comments ?? raw.body ?? '',
+    id: source.id ?? source.commentId ?? source.commentID ?? source.uuid ?? source._id,
+    nickname: resolveNickname(source),
+    content: source.content ?? source.comments ?? source.body ?? '',
     createdAt:
-        raw.createdAt ??
-        raw.created_at ??
-        raw.createDate ??
-        raw.createdDate ??
-        raw.created ??
+        source.createdAt ??
+        source.created_at ??
+        source.createDate ??
+        source.createdDate ??
+        source.created ??
         new Date().toISOString(),
-    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? nestedAuthorId,
-    postId: raw.postId ?? raw.boardId ?? raw.board_id ?? raw.post_id ?? nestedPostId,
+    authorId: source.authorId ?? source.userId ?? source.user_id ?? source.ownerId ?? nestedAuthorId,
+    postId: source.postId ?? source.boardId ?? source.board_id ?? source.post_id ?? nestedPostId,
     isMine:
         parseMineFlag(
-            raw.isMine ??
-            raw.mine ??
-            raw.mineYn ??
-            raw.ownerYn ??
-            raw.is_mine ??
-            raw.is_owner ??
-            raw.isAuthor ??
-            raw.isWriter
+            source.isMine ??
+            source.mine ??
+            source.mineYn ??
+            source.ownerYn ??
+            source.is_mine ??
+            source.is_owner ??
+            source.isAuthor ??
+            source.isWriter
         ),
   };
 };
