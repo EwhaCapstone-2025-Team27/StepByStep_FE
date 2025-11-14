@@ -111,6 +111,24 @@ const normalizePost = (raw) => {
   const comments = toNumber(
       raw.commentsNum ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
   );
+  const nestedAuthorId =
+      raw.user?.id ??
+      raw.user?.userId ??
+      raw.user?.user_id ??
+      raw.author?.id ??
+      raw.author?.userId ??
+      raw.author?.user_id ??
+      raw.writer?.id ??
+      raw.writer?.userId ??
+      raw.writer?.user_id ??
+      raw.owner?.id ??
+      raw.owner?.userId ??
+      raw.owner?.user_id ??
+      raw.createdBy?.id ??
+      raw.createdBy?.userId ??
+      raw.createdBy?.user_id ??
+      null;
+
   return {
     id: raw.id ?? raw.postId ?? raw.postID ?? raw.post_id ?? raw.uuid ?? raw._id,
     nickname: resolveNickname(raw),
@@ -120,7 +138,7 @@ const normalizePost = (raw) => {
     commentsNum: comments,
     likesNum: likes,
     liked: parseLiked(raw.liked ?? raw.isLiked ?? raw.likeYn ?? raw.likeStatus ?? raw.likeOn),
-    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? null,
+    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? nestedAuthorId,
     isMine:
         parseMineFlag(
             raw.isMine ??
@@ -137,6 +155,36 @@ const normalizePost = (raw) => {
 
 const normalizeComment = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
+  const nestedAuthorId =
+      raw.user?.id ??
+      raw.user?.userId ??
+      raw.user?.user_id ??
+      raw.author?.id ??
+      raw.author?.userId ??
+      raw.author?.user_id ??
+      raw.writer?.id ??
+      raw.writer?.userId ??
+      raw.writer?.user_id ??
+      raw.owner?.id ??
+      raw.owner?.userId ??
+      raw.owner?.user_id ??
+      raw.createdBy?.id ??
+      raw.createdBy?.userId ??
+      raw.createdBy?.user_id ??
+      null;
+
+  const nestedPostId =
+      raw.post?.id ??
+      raw.post?.postId ??
+      raw.post?.post_id ??
+      raw.board?.id ??
+      raw.board?.boardId ??
+      raw.board?.board_id ??
+      raw.postRef?.id ??
+      raw.postRef?.postId ??
+      raw.postRef?.post_id ??
+      null;
+
   return {
     id: raw.id ?? raw.commentId ?? raw.commentID ?? raw.uuid ?? raw._id,
     nickname: resolveNickname(raw),
@@ -148,8 +196,8 @@ const normalizeComment = (raw) => {
         raw.createdDate ??
         raw.created ??
         new Date().toISOString(),
-    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? null,
-    postId: raw.postId ?? raw.boardId ?? raw.board_id ?? raw.post_id ?? null,
+    authorId: raw.authorId ?? raw.userId ?? raw.user_id ?? raw.ownerId ?? nestedAuthorId,
+    postId: raw.postId ?? raw.boardId ?? raw.board_id ?? raw.post_id ?? nestedPostId,
     isMine:
         parseMineFlag(
             raw.isMine ??
