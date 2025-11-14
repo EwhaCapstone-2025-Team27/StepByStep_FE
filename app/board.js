@@ -60,42 +60,90 @@ const parseBoolean = (value) => {
   return false;
 };
 
-const normalizePost = (raw) => {
+const unwrapPostSource = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
+  const seen = new Set();
+  let current = raw;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const nested =
+        current.board_posts ??
+        current.board_post ??
+        current.boardPost ??
+        current.board ??
+        current.post ??
+        current.postRef;
+    if (nested && typeof nested === 'object') {
+      current = nested;
+      continue;
+    }
+    const dataCandidate = current.data;
+    if (dataCandidate && typeof dataCandidate === 'object' && !Array.isArray(dataCandidate)) {
+      current = dataCandidate;
+      continue;
+    }
+    break;
+  }
+  return current;
+};
+
+const normalizePost = (raw) => {
+  const source = unwrapPostSource(raw);
+  if (!source) return null;
+
   const idValue =
-      raw.id ?? raw.postId ?? raw.post_id ?? raw.postID ?? raw.uuid ?? raw._id ?? raw.boardPostId;
+      source.id ??
+      source.postId ??
+      source.post_id ??
+      source.postID ??
+      source.uuid ??
+      source._id ??
+      source.boardPostId;
   if (idValue == null) return null;
   const likes = toNumber(
-      raw.likes_count ?? raw.likesNum ?? raw.likeNum ?? raw.likes ?? raw.likeCount ?? raw.likesCnt
+      source.likes_count ??
+      source.likesNum ??
+      source.likeNum ??
+      source.likes ??
+      source.likeCount ??
+      source.likesCnt
   );
   const comments = toNumber(
-      raw.comments_count ?? raw.commentCount ?? raw.comments ?? raw.commentCnt ?? raw.commentsNum
+      source.comments_count ??
+      source.commentCount ??
+      source.comments ??
+      source.commentCnt ??
+      source.commentsNum
   );
   const nickname =
-      raw.author_nickname ??
-      raw.nickname ??
-      raw.userNickname ??
+      source.author_nickname ??
+      source.nickname ??
+      source.userNickname ??
       '익명';
   const createdAt =
-      raw.created_at ?? raw.createdAt ?? raw.createDate ?? raw.createdDate ?? new Date().toISOString();
-  const authorId = raw.user_id ?? raw.userId ?? raw.authorId ?? raw.ownerId;
+      source.created_at ??
+      source.createdAt ??
+      source.createDate ??
+      source.createdDate ??
+      new Date().toISOString();
+  const authorId = source.user_id ?? source.userId ?? source.authorId ?? source.ownerId;
   const mineRaw =
-      raw.isMine ??
-      raw.mine ??
-      raw.owned ??
-      raw.isOwned ??
-      raw.owner ??
-      raw.mineYn ??
-      raw.mineYN ??
-      raw.isAuthor ??
-      raw.isWriter ??
+      source.isMine ??
+      source.mine ??
+      source.owned ??
+      source.isOwned ??
+      source.owner ??
+      source.mineYn ??
+      source.mineYN ??
+      source.isAuthor ??
+      source.isWriter ??
       undefined;
 
   return {
     id: String(idValue),
     nickname,
     createdAt,
-    content: raw.content ?? raw.body ?? '',
+    content: source.content ?? source.body ?? '',
     commentsNum: comments,
     likesNum: likes,
     authorId: authorId != null ? String(authorId) : null,
