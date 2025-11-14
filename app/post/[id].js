@@ -25,6 +25,46 @@ const BORDER = '#E6E7EC';
 const TEXT_MAIN = '#0E0F12';
 const TEXT_SUB = '#5E6472';
 
+const LOCAL_LIKE_STORAGE_KEY = 'local_post_like_state';
+
+const readLocalLikeStore = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_LIKE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {}
+  return {};
+};
+
+const getLocalLikeSnapshot = async (postId) => {
+  if (!postId) return null;
+  const store = await readLocalLikeStore();
+  const key = String(postId);
+  const entry = store?.[key];
+  if (!entry || typeof entry !== 'object') return null;
+  const liked = parseLiked(entry.liked);
+  const likesNum = toNumber(entry.likesNum, undefined);
+  return { liked, likesNum };
+};
+
+const setLocalLikeSnapshot = async (postId, liked, likesNum) => {
+  if (!postId) return;
+  try {
+    const store = await readLocalLikeStore();
+    const key = String(postId);
+    if (liked) {
+      store[key] = {
+        liked: true,
+        likesNum: toNumber(likesNum),
+      };
+    } else {
+      delete store[key];
+    }
+    await AsyncStorage.setItem(LOCAL_LIKE_STORAGE_KEY, JSON.stringify(store));
+  } catch {}
+};
+
 const formatKST = (iso) => {
   try {
     const d = new Date(iso);
@@ -295,7 +335,23 @@ export default function PostDetailScreen() {
     try {
       setLoading(true);
       const payload = await boardApi.getPostById(postId);
-      const normalizedPost = normalizePost(payload);
+      let normalizedPost = normalizePost(payload);
+      const storedLike = await getLocalLikeSnapshot(postId);
+      if (storedLike) {
+        normalizedPost = normalizedPost
+            ? {
+              ...normalizedPost,
+              liked: storedLike.liked ?? normalizedPost.liked,
+              likesNum:
+                  storedLike.likesNum !== undefined
+                      ? storedLike.likesNum
+                      : normalizedPost.likesNum,
+            }
+            : {
+              liked: storedLike.liked,
+              likesNum: storedLike.likesNum,
+            };
+      }
       const commentSource = Array.isArray(payload?.data)
           ? payload.data
           : Array.isArray(payload?.comments)
@@ -450,12 +506,18 @@ export default function PostDetailScreen() {
     if (!post || likeBusy) return;
     const optimisticLike = !post.liked;
     setLikeBusy(true);
+    const postKey = post.id;
     setPost((prev) => {
       if (!prev) return prev;
       const likes = toNumber(prev.likesNum);
       const nextLikes = optimisticLike ? likes + 1 : Math.max(0, likes - 1);
       return { ...prev, liked: optimisticLike, likesNum: nextLikes };
     });
+    if (optimisticLike) {
+      setLocalLikeSnapshot(postKey, true, toNumber(post.likesNum) + 1).catch(() => {});
+    } else {
+      setLocalLikeSnapshot(postKey, false).catch(() => {});
+    }
     try {
       const res = optimisticLike
           ? await boardApi.likeOn(post.id, { likeNum: post.likesNum })
@@ -463,16 +525,24 @@ export default function PostDetailScreen() {
       const likesFromRes =
           res?.likesNum ?? res?.likeNum ?? res?.likes ?? res?.likeCount ?? res?.data?.likesNum;
       const likedFromRes = res?.liked ?? res?.isLiked ?? res?.likeYn ?? res?.likeStatus;
-      setPost((prev) =>
-          prev
-              ? {
-                ...prev,
-                likesNum:
-                    likesFromRes !== undefined ? toNumber(likesFromRes) : prev.likesNum,
-                liked: likedFromRes !== undefined ? parseLiked(likedFromRes) : prev.liked,
-              }
-              : prev
-      );
+      let resolvedLikes;
+      let resolvedLiked;
+      setPost((prev) => {
+        if (!prev) return prev;
+        resolvedLikes = likesFromRes !== undefined ? toNumber(likesFromRes) : prev.likesNum;
+        resolvedLiked =
+            likedFromRes !== undefined ? parseLiked(likedFromRes) : prev.liked;
+        return {
+          ...prev,
+          likesNum: resolvedLikes,
+          liked: resolvedLiked,
+        };
+      });
+      if (resolvedLiked !== undefined) {
+        setLocalLikeSnapshot(postKey, resolvedLiked, resolvedLikes).catch(() => {});
+      } else if (resolvedLikes !== undefined) {
+        setLocalLikeSnapshot(postKey, optimisticLike, resolvedLikes).catch(() => {});
+      }
     } catch (e) {
       setPost((prev) => {
         if (!prev) return prev;
@@ -480,6 +550,11 @@ export default function PostDetailScreen() {
         const restored = optimisticLike ? Math.max(0, likes - 1) : likes + 1;
         return { ...prev, liked: !optimisticLike, likesNum: restored };
       });
+      if (optimisticLike) {
+        setLocalLikeSnapshot(postKey, false).catch(() => {});
+      } else {
+        setLocalLikeSnapshot(postKey, true, toNumber(post.likesNum)).catch(() => {});
+      }
       Alert.alert('좋아요 실패', e?.message || '좋아요 처리에 실패했습니다.');
     } finally {
       setLikeBusy(false);
