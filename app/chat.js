@@ -64,7 +64,7 @@ export default function ChatScreen() {
         signal: controller.signal,
         onMessage: (token) => {
           setMessages((prev) =>
-            prev.map((m) => (m.id === botMsgId ? { ...m, text: (m.text || '') + token } : m))
+              prev.map((m) => (m.id === botMsgId ? { ...m, text: (m.text || '') + token } : m))
           );
           scrollToBottom();
         },
