@@ -2,9 +2,72 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, ActivityIndicator, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { aiApi } from '../lib/apiClient';
+import { quizApi } from '../lib/apiClient';
 
 const DEFAULT_KEYWORDS = ['피임','생리','연애','신체 변화','젠더'];
+
+const arrayOrEmpty = (val) => (Array.isArray(val) ? val : []);
+
+const normalizeOptions = (question) => {
+  const candidate = [
+    question?.options,
+    question?.choices,
+    question?.choiceList,
+    question?.answers,
+    question?.selections,
+  ].find((opt) => Array.isArray(opt));
+
+  return arrayOrEmpty(candidate).map((opt) =>
+      typeof opt === 'string' ? opt : opt != null ? String(opt) : ''
+  );
+};
+
+const normalizeCorrectIndex = (question, options = []) => {
+  const numeric = [
+    question?.correctIndex,
+    question?.answerIndex,
+    question?.answer,
+    question?.correctChoice,
+    question?.correct,
+  ].find((value) => typeof value === 'number' && Number.isFinite(value));
+
+  let resolved = typeof numeric === 'number' ? numeric : null;
+
+  if (resolved == null) {
+    const textual = [question?.correctOption, question?.correctAnswer, question?.answerText]
+        .find((value) => typeof value === 'string');
+
+    if (typeof textual === 'string' && options.length) {
+      const idx = options.findIndex((opt) => opt === textual);
+      if (idx >= 0) resolved = idx;
+    }
+  }
+
+  if (typeof resolved === 'number') {
+    if (!options.length) return resolved;
+    if (resolved < 0) return 0;
+    if (resolved >= options.length) return options.length - 1;
+    return resolved;
+  }
+
+  return 0;
+};
+
+const extractQuestions = (payload, keyword) => {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.questions)) return payload.questions;
+  if (Array.isArray(payload?.data?.questions)) return payload.data.questions;
+  if (Array.isArray(payload?.quiz?.questions)) return payload.quiz.questions;
+  if (Array.isArray(payload?.sets)) {
+    const target = keyword
+        ? payload.sets.find((set) => set?.keyword === keyword)
+        : payload.sets[0];
+    if (Array.isArray(target?.questions)) return target.questions;
+  }
+  if (Array.isArray(payload?.set?.questions)) return payload.set.questions;
+  return [];
+};
 
 // 폴백 문제(네트워크 실패 대비)
 const FALLBACK = [
@@ -56,28 +119,25 @@ export default function ScenarioScreen() {
         }
         setKw(String(useKw));
 
-        // AI에서 현재 키워드 2문제 가져오기 (perKeyword=2)
-        const res = await aiApi.generateQuiz({
-          keywords: [String(useKw)],
-          perKeyword: 2,
-          seed: Date.now() & 0xffff,
-        });
+        // BE 퀴즈 생성 API 호출
+        const res = await quizApi.createSet({ keyword: String(useKw) });
 
-        // 응답 파싱: sets[0].questions -> our shape
-        const set0 = Array.isArray(res?.sets) ? res.sets.find(s => s.keyword === String(useKw)) : null;
-        const qs = Array.isArray(set0?.questions) ? set0.questions : [];
+        const sourceQuestions = extractQuestions(res, String(useKw));
 
-        if (!qs.length) throw new Error('문항이 없습니다.');
+        if (!sourceQuestions.length) throw new Error('문항이 없습니다.');
 
         // 표준화 + id 부여
-        const mapped = qs.map((q, idx) => ({
-          id: idx + 1,
-          title: `상황 ${idx + 1}`,
-          prompt: q.prompt,
-          options: q.options || [],
-          correctIndex: q.correctIndex ?? 0,
-          explain: q.explain || '',
-        }));
+        const mapped = sourceQuestions.map((q, idx) => {
+          const options = normalizeOptions(q);
+          return {
+            id: q.id ?? idx + 1,
+            title: q.title || `상황 ${idx + 1}`,
+            prompt: q.prompt || q.question || '',
+            options,
+            correctIndex: normalizeCorrectIndex(q, options),
+            explain: q.explain || q.explanation || '',
+          };
+        });
 
         setQuestions(mapped);
       } catch (e) {

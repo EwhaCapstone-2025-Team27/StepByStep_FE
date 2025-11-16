@@ -1,8 +1,8 @@
 // screens/ChatScreen.js
 import { router } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, FlatList, Image, KeyboardAvoidingView, Platform,
+  Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,14 +20,14 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const listRef = useRef(null);
-  const abortRef = useRef(null);
+  const requestControllerRef = useRef(null);
 
   const scrollToBottom = () =>
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
 
   const probeHealth = async () => {
     try {
-      await systemApi.health(); // GET /api/healthz
+      await systemApi.health();
       return true;
     } catch {
       Alert.alert('서버 점검 중', '잠시 후 다시 시도해주세요.');
@@ -52,38 +52,67 @@ export default function ChatScreen() {
     setLoading(true);
     scrollToBottom();
 
-    // 스트리밍 시작
     const controller = new AbortController();
-    abortRef.current = controller;
+    requestControllerRef.current = controller;
 
     try {
-      await aiApi.stream({
-        query: content,
-        topk: 8,
-        friendStyle: true,
+      const data = await aiApi.chat({
+        message: content,
+        top_k: 5,
+        enable_bm25: true,
+        enable_rrf: true,
         signal: controller.signal,
-        onMessage: (token) => {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === botMsgId ? { ...m, text: (m.text || '') + token } : m))
-          );
-          scrollToBottom();
-        },
-        onDone: () => {
-          setLoading(false);
-          abortRef.current = null;
-        },
       });
+
+      const answer = data?.answer?.trim()
+          ? data.answer.trim()
+          : '답변을 가져오지 못했어요. 잠시 후 다시 시도해 주세요.';
+      const citations = Array.isArray(data?.citations) ? data.citations : [];
+
+      setMessages((prev) =>
+          prev.map((m) => (m.id === botMsgId ? { ...m, text: answer, citations } : m)),
+      );
     } catch (e) {
+      if (controller.signal.aborted) {
+        setMessages((prev) =>
+            prev.map((m) =>
+                m.id === botMsgId
+                    ? { ...m, text: '요청을 취소했어요.' }
+                    : m,
+            ),
+        );
+      } else {
+        setMessages((prev) =>
+            prev.map((m) =>
+                m.id === botMsgId
+                    ? { ...m, text: '응답을 가져오지 못했어요. 잠시 후 다시 시도해 주세요.' }
+                    : m,
+            ),
+        );
+        Alert.alert('응답 실패', e?.message || '서버 통신에 실패했습니다.');
+      }
+    } finally {
+      requestControllerRef.current = null;
       setLoading(false);
-      abortRef.current = null;
-      Alert.alert('응답 실패', e?.message || '서버 통신에 실패했습니다.');
     }
   };
 
   const stopStreaming = () => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
     setLoading(false);
+  };
+
+  useEffect(() => () => requestControllerRef.current?.abort(), []);
+
+  const formatCitationLabel = (citation, idx) => {
+    if (!citation) return `자료 ${idx + 1}`;
+    if (typeof citation === 'string') return citation;
+    if (citation.title) return citation.title;
+    if (citation.url) return citation.url;
+    if (citation.id) return citation.id;
+    if (citation.source) return citation.source;
+    return `자료 ${idx + 1}`;
   };
 
   const renderItem = ({ item }) => {
@@ -102,6 +131,26 @@ export default function ChatScreen() {
           <Text style={[styles.msgText, mine ? styles.mineText : styles.theirsText]}>
             {item.text}
           </Text>
+          {!mine && Array.isArray(item.citations) && item.citations.length > 0 ? (
+              <View style={styles.citationWrap}>
+                <Text style={styles.citationTitle}>참고 자료</Text>
+                {item.citations.map((citation, idx) => (
+                    <TouchableOpacity
+                        key={`${item.id}-cite-${idx}`}
+                        onPress={() => {
+                          const url = typeof citation === 'string' ? citation : citation?.url;
+                          if (url && /^https?:\/\//i.test(url)) Linking.openURL(url).catch(() => {});
+                        }}
+                        activeOpacity={0.7}
+                        disabled={!(typeof citation === 'string' ? citation : citation?.url)}
+                    >
+                      <Text style={styles.citationItem}>
+                        • {formatCitationLabel(citation, idx)}
+                      </Text>
+                    </TouchableOpacity>
+                ))}
+              </View>
+          ) : null}
         </View>
       </View>
     );
@@ -245,6 +294,15 @@ const styles = StyleSheet.create({
   msgText: { fontSize: 15, lineHeight: 22 },
   mineText: { color: '#101114' },
   theirsText: { color: '#101114' },
+  citationWrap: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(16, 17, 20, 0.12)',
+    gap: 4,
+  },
+  citationTitle: { fontSize: 12, color: '#413a53', fontWeight: '700' },
+  citationItem: { fontSize: 12, color: '#312b40', textDecorationLine: 'underline' },
 
   tailBase: { position: 'absolute', bottom: 0, width: 10, height: 10, transform: [{ rotate: '45deg' }] },
   tailLeft: { left: -4, backgroundColor: BOT },
