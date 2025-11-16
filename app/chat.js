@@ -1,6 +1,6 @@
 // screens/ChatScreen.js
 import { router } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, FlatList, Image, KeyboardAvoidingView, Platform,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
@@ -74,8 +74,9 @@ export default function ChatScreen() {
         },
       });
     } catch (e) {
-      setLoading(false);
       abortRef.current = null;
+      if (controller.signal.aborted) return; // 사용자가 중단한 경우에는 에러 노출 X
+      setLoading(false);
       Alert.alert('응답 실패', e?.message || '서버 통신에 실패했습니다.');
     }
   };
@@ -85,6 +86,8 @@ export default function ChatScreen() {
     abortRef.current = null;
     setLoading(false);
   };
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const renderItem = ({ item }) => {
     const mine = item.role === 'user';
