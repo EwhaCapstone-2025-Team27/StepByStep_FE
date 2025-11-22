@@ -210,16 +210,16 @@ export default function ChatScreen() {
 
         {/* Input Row */}
         <View style={styles.inputWrap}>
-          <TouchableOpacity style={styles.plusBtn} activeOpacity={0.8}>
-            <Text style={styles.plusText}>＋</Text>
-          </TouchableOpacity>
+          {/*<TouchableOpacity style={styles.plusBtn} activeOpacity={0.8}>*/}
+          {/*  <Text style={styles.plusText}>＋</Text>*/}
+          {/*</TouchableOpacity>*/}
 
           <View style={styles.inputPill}>
             <TextInput
               style={styles.input}
               value={input}
               onChangeText={setInput}
-              placeholder="궁금한 점을 입력해 주세요."
+              placeholder="궁금한 내용이나 고민을 입력해 주세요..."
               placeholderTextColor="#8a8f98"
               multiline
             />
@@ -315,10 +315,10 @@ const styles = StyleSheet.create({
   },
   plusText: { color: TEXT_MAIN, fontSize: 20, lineHeight: 20 },
   inputPill: {
-    flexDirection: 'row', alignItems: 'flex-end', paddingLeft: 52, paddingRight: 6, paddingVertical: 6,
+    flexDirection: 'row', alignItems: 'flex-end', paddingLeft: 25, paddingRight: 6, paddingVertical: 6,
     backgroundColor: '#F5F6FA', borderWidth: 1, borderColor: BORDER, borderRadius: 22,
   },
-  input: { flex: 1, minHeight: 40, maxHeight: 120, paddingHorizontal: 12, paddingVertical: 8, color: TEXT_MAIN, fontSize: 15 },
+  input: { flex: 1, minHeight: 40, maxHeight: 120, paddingHorizontal: 0, paddingVertical: 12, color: TEXT_MAIN, fontSize: 15 },
   sendBtn: { width: 40, height: 40, borderRadius: 18, backgroundColor: CARD, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: BORDER, marginLeft: 6 },
   sendIcon: { color: TEXT_MAIN, fontSize: 16, fontWeight: '700' },
