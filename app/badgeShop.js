@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { badgeApi, pointsApi } from '../lib/apiClient';
+import { useAuth } from '../lib/auth-context';
 import { toPointString } from '../lib/pointsUtils';
 
 const BADGE_PAGE_SIZE = 20;
@@ -42,7 +43,38 @@ const normalizeBadgeList = (list) => {
       });
 };
 
+const mergeBadgeForUser = (currentUser, badge) => {
+  const prevUser = currentUser ?? {};
+  const badgeId = badge?.id ?? badge?.badgeId ?? badge?.code;
+  const baseBadges = Array.isArray(prevUser.badges) ? prevUser.badges : [];
+  const normalizedBadge = {
+    id: badgeId,
+    badgeId,
+    code: badge?.code,
+    name: badge?.name,
+    badgeName: badge?.name,
+    emoji: badge?.emoji,
+    icon: badge?.emoji,
+    owned: true,
+    hasBadge: true,
+    isOwned: true,
+    userHasBadge: true,
+  };
+
+  const hasBadge = baseBadges.some((item) => String(item?.id ?? item?.badgeId ?? item?.code) === String(badgeId));
+  if (hasBadge) {
+    return baseBadges.map((item) =>
+        String(item?.id ?? item?.badgeId ?? item?.code) === String(badgeId)
+            ? { ...item, ...normalizedBadge, owned: true }
+            : item
+    );
+  }
+  return [...baseBadges, normalizedBadge];
+};
+
 export default function BadgeShopScreen() {
+  const auth = useAuth();
+  const authUser = auth?.user ?? null;
   const params = useLocalSearchParams();
   const initialPointParam = params?.points;
   const [myPoints, setMyPoints] = useState(() => {
@@ -217,17 +249,15 @@ export default function BadgeShopScreen() {
       const pointsInfo = res?.points ?? res?.data?.points ?? res;
 
       const afterPoint = Number(pointsInfo?.after ?? pointsInfo?.current ?? pointsInfo?.balance ?? pointsInfo?.point);
-      if (Number.isFinite(afterPoint)) {
-        setMyPoints(afterPoint);
-        setPointSummary((prev) => ({
-          ...prev,
-          currentPoints: afterPoint,
-          updatedAt: pointsInfo?.updatedAt ?? res?.updatedAt ?? new Date().toISOString(),
-        }));
-        pulse();
-      } else {
-        pulse();
-      }
+      const computedPoints = Number.isFinite(afterPoint) ? afterPoint : prevPoints - price;
+      const safePoints = Number.isFinite(computedPoints) ? computedPoints : prevPoints;
+      setMyPoints(safePoints);
+      setPointSummary((prev) => ({
+        ...prev,
+        currentPoints: safePoints,
+        updatedAt: pointsInfo?.updatedAt ?? res?.updatedAt ?? new Date().toISOString(),
+      }));
+      pulse();
 
       const purchasedId = badgeInfo?.badgeId ?? badgeInfo?.id ?? badgeId;
       setBadges((prev) =>
@@ -237,6 +267,27 @@ export default function BadgeShopScreen() {
                   : item
           )
       );
+      if (auth?.setTokens) {
+        const badgeForUser = {
+          ...selected,
+          ...badgeInfo,
+          id: purchasedId,
+          badgeId: purchasedId,
+          emoji: badgeInfo?.emoji ?? selected?.emoji,
+          name: badgeInfo?.name ?? badgeInfo?.badgeName ?? selected?.name,
+        };
+        const mergedBadges = mergeBadgeForUser(authUser, badgeForUser);
+        await auth.setTokens({
+          user: {
+            ...(authUser ?? {}),
+            badges: mergedBadges,
+            points: safePoints,
+            points_total: safePoints,
+            point: safePoints,
+            badgePoints: safePoints,
+          },
+        });
+      }
       setSelected(null);
     } catch (err) {
       setSelected(null);
@@ -273,7 +324,7 @@ export default function BadgeShopScreen() {
       }
       Alert.alert('구매 실패', err?.message || '배지 구매 중 오류가 발생했어요.');
     }
-  }, [selected, myPoints, pulse]);
+  }, [selected, myPoints, pulse, auth?.setTokens, authUser]);
 
   const renderBadgeItem = ({ item }) => {
     const has = Boolean(item.owned);
