@@ -313,7 +313,7 @@ export default function BadgeShopScreen() {
             <Text style={styles.historyBtnText}>내 포인트 내역</Text>
           </TouchableOpacity>
         </View>
-        <Animated.View style={[styles.pointsWrap, { transform: [{ scale: scaleAnim }] }] }>
+        <Animated.View style={[styles.pointsWrap, { width: 80, transform: [{ scale: scaleAnim }] }] }>
           <Text style={styles.pointsCoin}>●</Text>
           <Text style={styles.pointsText}>
             {pointsLoading ? '로딩…' : `${toPointString(myPoints)} P`}
@@ -371,7 +371,7 @@ export default function BadgeShopScreen() {
               {!!selected?.description && (
                   <Text style={styles.modalDescription}>{selected.description}</Text>
               )}
-              <View style={[styles.pricePill, { marginTop: 12 }]}>
+              <View style={[styles.pricePill, { width: 75,marginTop: 12 }]}>
                 <Text style={styles.coinDot}>●</Text>
                 <Text style={styles.priceText}>{toPointString(selected?.price ?? 0)} P</Text>
               </View>
