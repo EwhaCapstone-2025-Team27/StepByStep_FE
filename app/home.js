@@ -26,6 +26,24 @@ const normalizeBadges = (list) => {
   }));
 };
 
+const mergeOwnedBadges = (...lists) => {
+  const map = new Map();
+
+  lists
+      .filter(Array.isArray)
+      .forEach((list) => {
+        list.forEach((badge) => {
+          if (!badge || !badge.owned) return;
+          const key = badge.id != null ? String(badge.id) : null;
+          const safeKey = key ?? `badge-${map.size}`;
+          const prev = map.get(safeKey) || {};
+          map.set(safeKey, { ...prev, ...badge, id: safeKey });
+        });
+      });
+
+  return Array.from(map.values());
+};
+
 export default function HomeScreen() {
   const auth = useAuth();
   const authUser = auth?.user || {};
@@ -104,7 +122,8 @@ export default function HomeScreen() {
       if (Number.isFinite(Number(v))) points = Number(v);
     }
 
-    let badges = fallbackBadges;
+    const profileBadges = normalizeBadges(profile?.badges);
+    let normalizedBadges = [];
     if (badgesRes.status === 'fulfilled') {
       const list =
           Array.isArray(badgesRes.value)
@@ -114,9 +133,11 @@ export default function HomeScreen() {
                   : Array.isArray(badgesRes.value?.data?.badges)
                       ? badgesRes.value.data.badges
                       : [];
-      const owned = normalizeBadges(list).filter((b) => b.owned);
-      if (owned.length) badges = owned;
+      normalizedBadges = normalizeBadges(list);
     }
+
+    const mergedBadges = mergeOwnedBadges(profileBadges, normalizedBadges, fallbackBadges);
+    const badges = mergedBadges.length ? mergedBadges : fallbackBadges;
 
     setSummary({
       nickname,
@@ -126,6 +147,11 @@ export default function HomeScreen() {
       profileImage: avatar,
     });
   }, [fallbackAvatar, fallbackBadges, fallbackNickname, fallbackPoints, fallbackTitle]);
+
+  useEffect(() => {
+    if (auth?.loading) return;
+    loadSummary();
+  }, [auth?.accessToken, auth?.loading, loadSummary]);
 
   useFocusEffect(
       useCallback(() => {
