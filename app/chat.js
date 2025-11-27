@@ -58,9 +58,6 @@ export default function ChatScreen() {
     try {
       const data = await aiApi.chat({
         message: content,
-        top_k: 5,
-        enable_bm25: true,
-        enable_rrf: true,
         signal: controller.signal,
       });
 
