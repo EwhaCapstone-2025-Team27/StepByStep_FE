@@ -1,4 +1,5 @@
 // screens/ChatScreen.js
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -7,8 +8,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { aiApi, systemApi } from '../lib/apiClient';
+import { useAuth } from '../lib/auth-context';
 
 export default function ChatScreen() {
+  const auth = useAuth?.();
   const [messages, setMessages] = useState([
     {
       id: 'sys-1',
@@ -19,11 +22,15 @@ export default function ChatScreen() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [userId, setUserId] = useState(() => {
+    const raw = auth?.user?.id ?? auth?.user?.userId;
+    return raw != null ? String(raw) : null;
+  });
   const listRef = useRef(null);
   const requestControllerRef = useRef(null);
 
   const scrollToBottom = () =>
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
 
   const probeHealth = async () => {
     try {
@@ -34,6 +41,30 @@ export default function ChatScreen() {
       return false;
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolved = auth?.user?.id ?? auth?.user?.userId;
+    if (resolved != null) {
+      const idStr = String(resolved);
+      setUserId(idStr);
+      AsyncStorage.setItem('x_user_id', idStr).catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('x_user_id');
+        if (!cancelled && stored) {
+          setUserId(String(stored));
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth?.user?.id, auth?.user?.userId]);
 
   const sendMessage = async () => {
     const content = input.trim();
@@ -58,6 +89,10 @@ export default function ChatScreen() {
     try {
       const data = await aiApi.chat({
         message: content,
+        userId: userId ?? 'guest',
+        top_k: 8,
+        enable_bm25: true,
+        enable_rrf: true,
         signal: controller.signal,
       });
 
