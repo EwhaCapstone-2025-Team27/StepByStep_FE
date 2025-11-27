@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform,
+  Alert, FlatList, Image, KeyboardAvoidingView, Linking, Platform, ScrollView,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -158,29 +158,36 @@ export default function ChatScreen() {
             resizeMode="cover"
           />
         )}
-        <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
-          <View style={[styles.tailBase, mine ? styles.tailRight : styles.tailLeft]} />
-          <Text style={[styles.msgText, mine ? styles.mineText : styles.theirsText]}>
-            {item.text}
-          </Text>
+        <View style={styles.msgContent}>
+          <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
+            <View style={[styles.tailBase, mine ? styles.tailRight : styles.tailLeft]} />
+            <Text style={[styles.msgText, mine ? styles.mineText : styles.theirsText]}>
+              {item.text}
+            </Text>
+          </View>
           {!mine && Array.isArray(item.citations) && item.citations.length > 0 ? (
-              <View style={styles.citationWrap}>
-                <Text style={styles.citationTitle}>참고 자료</Text>
-                {item.citations.map((citation, idx) => (
-                    <TouchableOpacity
-                        key={`${item.id}-cite-${idx}`}
-                        onPress={() => {
-                          const url = typeof citation === 'string' ? citation : citation?.url;
-                          if (url && /^https?:\/\//i.test(url)) Linking.openURL(url).catch(() => {});
-                        }}
-                        activeOpacity={0.7}
-                        disabled={!(typeof citation === 'string' ? citation : citation?.url)}
-                    >
-                      <Text style={styles.citationItem}>
-                        • {formatCitationLabel(citation, idx)}
-                      </Text>
-                    </TouchableOpacity>
-                ))}
+              <View style={styles.citationRow}>
+                <Text style={styles.citationLabel}>출처:</Text>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.citationContent}
+                    style={styles.citationScroll}
+                >
+                  {item.citations.map((citation, idx) => (
+                      <TouchableOpacity
+                          key={`${item.id}-cite-${idx}`}
+                          onPress={() => {
+                            const url = typeof citation === 'string' ? citation : citation?.url;
+                            if (url && /^https?:\/\//i.test(url)) Linking.openURL(url).catch(() => {});
+                          }}
+                          activeOpacity={0.7}
+                          disabled={!(typeof citation === 'string' ? citation : citation?.url)}
+                      >
+                        <Text style={styles.citationBadge}>{formatCitationLabel(citation, idx)}</Text>
+                      </TouchableOpacity>
+                  ))}
+                </ScrollView>
               </View>
           ) : null}
         </View>
@@ -320,21 +327,28 @@ const styles = StyleSheet.create({
   avatar: {
     width: 48, height: 48, borderRadius: 24, backgroundColor: '#F4E6F8', borderWidth: 1, borderColor: '#EAD6F0', marginRight: 8,
   },
-  bubble: { maxWidth: '80%', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 14, position: 'relative' },
+  msgContent: { flexShrink: 1, gap: 6 },
+  bubble: { maxWidth: 'auto', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 14, position: 'relative' },
   theirs: { backgroundColor: BOT, borderTopLeftRadius: 4 },
   mine: { backgroundColor: USER, borderTopRightRadius: 4 },
   msgText: { fontSize: 15, lineHeight: 22 },
   mineText: { color: '#101114' },
   theirsText: { color: '#101114' },
-  citationWrap: {
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(16, 17, 20, 0.12)',
-    gap: 4,
+  citationScroll: { paddingLeft: 0 },
+  citationRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  citationContent: { flexDirection: 'row', gap: 8, paddingRight: 10 },
+  citationLabel: { fontSize: 12, color: TEXT_SUB, fontWeight: '600' },
+  citationBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: CARD,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BORDER,
+    fontSize: 12,
+    color: '#312b40',
+    textDecorationLine: 'none',
   },
-  citationTitle: { fontSize: 12, color: '#413a53', fontWeight: '700' },
-  citationItem: { fontSize: 12, color: '#312b40', textDecorationLine: 'underline' },
 
   tailBase: { position: 'absolute', bottom: 0, width: 10, height: 10, transform: [{ rotate: '45deg' }] },
   tailLeft: { left: -4, backgroundColor: BOT },
