@@ -6,18 +6,18 @@ import { quizApi } from '../lib/apiClient';
 
 const PALETTE = ['#eadff6ff', '#e8beff', '#a139d5', '#d084fc', '#c652e3ff'];
 const FALLBACK = [
-  { id: 3, title: '건강한 성관계' },
-  { id: 4, title: '성에 대한 올바른 이해' },
-  { id: 6, title: '피임' },
-  { id: 7, title: '연애' },
-  { id: 8, title: '성병/검사' },
-  { id: 9, title: '외모' },
-  { id: 10, title: '생리' },
-  { id: 11, title: '신체 변화' },
-  { id: 12, title: '젠더' },
-  { id: 13, title: '자위/욕구' },
-  { id: 14, title: '임신/출산' },
-  { id: 15, title: '온라인/디지털' },
+  { id: 1, title: '피임' },
+  { id: 2, title: '연애' },
+  { id: 3, title: '성병' },
+  { id: 4, title: '외모' },
+  { id: 5, title: '생리' },
+  { id: 6, title: '신체 변화' },
+  { id: 7, title: '젠더' },
+  { id: 8, title: '자위/욕구' },
+  { id: 9, title: '디지털' },
+  { id: 10, title: '임신/출산' },
+  { id: 11, title: '건강한 성관계' },
+  { id: 12, title: '성에 대한 올바른 이해' },
 ];
 
 const pickKeywords = (payload) => {
@@ -29,7 +29,7 @@ const pickKeywords = (payload) => {
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const BUBBLE_SIZES = [250, 230, 210, 180, 160, 120];
+const BUBBLE_SIZES = [130, 240, 180, 200, 220, 160];
 const getBubbleSize = (index, total) => {
   const seed = (index + 3) * 17 + total * 11;
   const base = BUBBLE_SIZES[seed % BUBBLE_SIZES.length];
