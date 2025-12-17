@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "SCSC-App",
+    "name": "성큼성큼",
     "slug": "SCSC-App",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,6 +17,8 @@
     },
 
     "android": {
+      "package": "com.seongkeum.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -24,8 +26,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "package": "com.dragon.scsc"
+      "predictiveBackGestureEnabled": false
     },
 
     "web": {

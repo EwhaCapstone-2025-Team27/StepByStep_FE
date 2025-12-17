@@ -3,7 +3,7 @@ import 'dotenv/config';
 
 export default {
   expo: {
-    name: 'SCSC-App',
+    name: '성큼성큼',
     slug: 'SCSC-App',
     sdkVersion: '54.0.0',
     newArchEnabled: true,
@@ -18,9 +18,10 @@ export default {
       }],
       'expo-font',
     ],
-    ios: { bundleIdentifier: 'com.anonymous.SCSCApp', supportsTablet: true },
+    ios: { bundleIdentifier: 'com.seongkeum.app', supportsTablet: true },
     android: {
-      package: 'com.anonymous.SCSCApp',
+      package: 'com.seongkeum.app',
+      versionCode: 1,
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       adaptiveIcon: {
@@ -35,6 +36,9 @@ export default {
     extra: {
       EXPO_PUBLIC_API: process.env.EXPO_PUBLIC_API ?? 'https://api.seongkeum.app',
       router: {},
+      eas: {
+        projectId: "cffe93a2-1f8c-4629-9265-a7f9d46d4619"
+      }
     },
   },
 };
