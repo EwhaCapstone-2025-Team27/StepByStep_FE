@@ -30,7 +30,7 @@ Expo Router 기반의 파일 라우팅을 사용하며, Android 환경에서 실
 ### 1️⃣ 저장소 클론
 
 ```bash
-git clone <YOUR_REPO_URL>
+git clone https://github.com/EwhaCapstone-2025-Team27/StepByStep_FE.git
 cd StepByStep_FE
 ```
 
