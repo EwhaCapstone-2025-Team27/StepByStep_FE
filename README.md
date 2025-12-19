@@ -1,50 +1,101 @@
-# Welcome to your Expo app 👋
+# 성큼성큼 - Frontend
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+해당 리포지토리는 **성큼성큼** 모바일 앱의 프론트엔드(Expo/React Native) 코드입니다.
+Expo Router 기반의 파일 라우팅을 사용하며, Android 환경에서 실행할 수 있습니다.
 
-## Get started
+---
 
-1. Install dependencies
+## 📁 Source Code 설명
 
-   ```bash
-   npm install
-   ```
+프로젝트의 주요 구조는 다음과 같습니다:
 
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+.
+├── app/                 # Expo Router 라우팅(화면) 폴더
+├── assets/              # 이미지/폰트 등 정적 리소스
+├── components/          # 재사용 UI 컴포넌트
+├── constants/           # 상수 정의
+├── hooks/               # 커스텀 훅
+├── lib/                 # 유틸/헬퍼/공통 로직
+├── app.json             # Expo 앱 설정
+├── app.config.js        # Expo 동적 설정(필요 시)
+├── package.json         # 스크립트/의존성
+└── tsconfig.json        # TypeScript 설정
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-## Learn more
+## 🛠️ How to Build
 
-To learn more about developing your project with Expo, look at the following resources:
+### 1️⃣ 저장소 클론
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+git clone <YOUR_REPO_URL>
+cd StepByStep_FE
+```
 
-## Join the community
+### 2️⃣ 의존성 설치
 
-Join our community of developers creating universal apps.
+```bash
+npm install
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+> `node_modules`는 저장소에 포함되어 있지 않으며, 위 명령을 통해 설치합니다.
+
+---
+
+## 🚀 How to Run
+
+### 1️⃣ 개발 서버 실행
+
+```bash
+npx expo start
+```
+
+실행 후 터미널 안내에 따라 다음 중 하나로 실행할 수 있습니다:
+
+- **Expo Go** (QR 코드 스캔)
+- **Android Emulator**
+
+### 2️⃣ 플랫폼 실행(선택)
+
+```bash
+npm run android
+```
+
+---
+
+## ✅ How to Test / Lint
+
+현재 별도의 테스트 스위트는 없으며, 린트 검사만 제공합니다:
+
+```bash
+npm run lint
+```
+
+---
+
+## ⚙️ 개발 환경
+
+- **Node.js** (권장: LTS 버전)
+- **npm**
+- **Expo CLI** (필수는 아니며 `npx expo`로 실행 가능)
+
+---
+
+## 📦 주요 라이브러리
+
+`package.json` 기준 주요 의존성은 다음과 같습니다:
+
+- **expo / expo-router**: 앱 실행 및 라우팅
+- **react / react-native**: UI 및 네이티브 렌더링
+- **@react-navigation/native**: 네비게이션 기반
+- **react-native-gesture-handler / reanimated / screens**: 네이티브 제스처/애니메이션
+- **expo-image / expo-linear-gradient / expo-splash-screen**: UI/이미지/스플래시 구성
+
+---
+
+## 🔗 참고
+
+- Expo 공식 문서: https://docs.expo.dev/
+- Expo Router 문서: https://docs.expo.dev/router/introduction/
